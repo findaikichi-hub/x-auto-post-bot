@@ -25,5 +25,5 @@ jobs:
         env:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          RSS_FEED_URL: "https://www3.nhk.or.jp/rss/news/cat0.xml"
+          RSS_URL: "https://www3.nhk.or.jp/rss/news/cat0.xml"
         run: python scripts/notion_insert.py
