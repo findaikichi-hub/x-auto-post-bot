@@ -10,10 +10,11 @@ def ensure_package(pkg_name):
         print(f"[INFO] Installing missing package: {pkg_name}")
         subprocess.check_call([sys.executable, "-m", "pip", "install", pkg_name])
 
-# 必要なライブラリをインストール
+# ===== 最初に必要パッケージを確実に入れる =====
 ensure_package("feedparser")
 ensure_package("requests")
 
+# ===== インストール後に import =====
 import feedparser
 import requests
 
