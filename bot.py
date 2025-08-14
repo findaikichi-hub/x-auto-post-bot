@@ -1,54 +1,56 @@
 import os
-import requests
-import feedparser
+import sys
+import subprocess
 
-# 環境変数からAPIキー取得
-X_API_KEY = os.getenv("X_API_KEY")
-DEEPL_API_KEY = os.getenv("DEEPL_API_KEY")
-
-DEEPL_API_URL = "https://api-free.deepl.com/v2/translate"  # 無料版エンドポイント
-RSS_URL = "https://feeds.bbci.co.uk/news/world/rss.xml"
-
-def translate_text(text, target_lang="JA"):
-    if not DEEPL_API_KEY:
-        print("[ERROR] DEEPL_API_KEY is not set.")
-        return text
+# 必要なパッケージを確認してインストール
+def ensure_package(pkg_name):
     try:
-        response = requests.post(
-            DEEPL_API_URL,
-            data={
-                "auth_key": DEEPL_API_KEY,
-                "text": text,
-                "target_lang": target_lang
-            }
+        __import__(pkg_name)
+    except ImportError:
+        print(f"[INFO] Installing missing package: {pkg_name}")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg_name])
+
+# 必要なライブラリを確認
+ensure_package("feedparser")
+ensure_package("requests")
+
+import feedparser
+import requests
+
+# デバッグ用に環境変数を表示（APIキーはマスク）
+print(f"[DEBUG] X_API_KEY={'***' if os.getenv('X_API_KEY') else 'None'}")
+print(f"[DEBUG] DEEPL_API_KEY={'***' if os.getenv('DEEPL_API_KEY') else 'None'}")
+
+# RSS URL
+rss_url = os.getenv("RSS_URL", "https://feeds.bbci.co.uk/news/world/rss.xml")
+print(f"[INFO] Fetching RSS feed from: {rss_url}")
+
+# RSSを取得
+feed = feedparser.parse(rss_url)
+print(f"[INFO] Found {len(feed.entries)} entries")
+
+# 各記事を翻訳して表示
+deepl_api_key = os.getenv("DEEPL_API_KEY")
+if not deepl_api_key:
+    print("[ERROR] DEEPL_API_KEY not found in environment variables.")
+    sys.exit(1)
+
+for entry in feed.entries[:5]:
+    title = entry.title
+    link = entry.link
+
+    # DeepL APIで翻訳
+    try:
+        resp = requests.post(
+            "https://api-free.deepl.com/v2/translate",
+            data={"auth_key": deepl_api_key, "text": title, "target_lang": "JA"},
+            timeout=10
         )
-        response.raise_for_status()
-        result = response.json()
-        if "translations" in result:
-            return result["translations"][0]["text"]
+        if resp.status_code == 200:
+            translated_title = resp.json()["translations"][0]["text"]
         else:
-            print("[ERROR] Unexpected DeepL API response:", result)
-            return text
-    except requests.RequestException as e:
-        print(f"Error:  DeepL translation failed: {e}")
-        return text
+            translated_title = "[翻訳失敗]"
+    except Exception as e:
+        translated_title = f"[翻訳エラー: {e}]"
 
-def fetch_rss_entries():
-    print(f"[INFO] Fetching RSS feed from: {RSS_URL}")
-    feed = feedparser.parse(RSS_URL)
-    print(f"[INFO] Found {len(feed.entries)} entries")
-    return feed.entries
-
-def main():
-    print(f"[DEBUG] X_API_KEY={'***' if X_API_KEY else 'NOT SET'}")
-    print(f"[DEBUG] DEEPL_API_KEY={'***' if DEEPL_API_KEY else 'NOT SET'}")
-
-    entries = fetch_rss_entries()
-    for entry in entries[:5]:  # 最新5件だけ処理
-        translated_title = translate_text(entry.title)
-        print(f"- {entry.title}")
-        print(f"  → {translated_title}")
-        print(f"  {entry.link}")
-
-if __name__ == "__main__":
-    main()
+    print(f"- {title}\n  → {translated_title}\n  {link}")
