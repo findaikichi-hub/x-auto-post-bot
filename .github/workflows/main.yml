@@ -1,34 +1,19 @@
-name: Auto Post to X (MVP)
+name: Run X Auto Post Bot
 
 on:
-  schedule:
-    - cron: '0 */6 * * *'  # 6時間ごとに実行（UTC）
-  workflow_dispatch:        # 手動実行も可能
+  workflow_dispatch:
 
 jobs:
-  post-to-x:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
+      - uses: actions/checkout@v3
 
       - name: Install dependencies
-        run: |
-          pip install feedparser httpx python-dotenv deepl notion-client tweepy
+        run: pip install -r requirements.txt
 
-      - name: Run bot script
+      - name: Run bot
+        run: python bot.py
         env:
-          DEEPL_API_KEY: \${{ secrets.DEEPL_API_KEY }}
-          NOTION_TOKEN: \${{ secrets.NOTION_TOKEN }}
-          NOTION_DB_ID: \${{ secrets.NOTION_DB_ID }}
-          X_API_KEY: \${{ secrets.X_API_KEY }}
-          X_API_SECRET: \${{ secrets.X_API_SECRET }}
-          X_ACCESS_TOKEN: \${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_SECRET: \${{ secrets.X_ACCESS_SECRET }}
-        run: |
-          python bot.py
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
