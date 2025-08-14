@@ -1,20 +1,22 @@
 import os
-import subprocess
 import sys
+import subprocess
 
-# feedparser が未インストールならインストール
-try:
-    import feedparser
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "feedparser"])
-    import feedparser
+def ensure_package(pkg_name):
+    """パッケージがなければ pip でインストール"""
+    try:
+        __import__(pkg_name)
+    except ImportError:
+        print(f"[INFO] Installing missing package: {pkg_name}")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg_name])
 
-# requests が未インストールならインストール
-try:
-    import requests
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
-    import requests
+# 必要なライブラリをインストール
+ensure_package("feedparser")
+ensure_package("requests")
+
+# インストール後にインポート
+import feedparser
+import requests
 
 # 環境変数からキーを取得
 X_API_KEY = os.getenv("X_API_KEY")
