@@ -1,3 +1,5 @@
+# リポジトリ直下で実行
+cat > .github/workflows/fetch_and_queue.yml <<'YAML'
 name: Fetch and Queue News
 
 on:
@@ -9,10 +11,10 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -27,7 +29,7 @@ jobs:
           RSS_URL: "https://feeds.bbci.co.uk/news/world/rss.xml"
         run: |
           python3 << 'EOF'
-          import os
+          import os, time, json
           import requests
           import feedparser
 
@@ -36,41 +38,61 @@ jobs:
           NOTION_DB_DRAFT_ID = os.getenv("NOTION_DB_DRAFT_ID")
           RSS_URL = os.getenv("RSS_URL")
 
-          # Fetch RSS feed
-          feed = feedparser.parse(RSS_URL)
-          for entry in feed.entries[:5]:
-              title = entry.title
-              url = entry.link
+          assert DEEPL_API_KEY, "DEEPL_API_KEY missing"
+          assert NOTION_TOKEN, "NOTION_TOKEN missing"
+          assert NOTION_DB_DRAFT_ID, "NOTION_DB_DRAFT_ID missing"
 
-              # Translate title via DeepL
-              resp = requests.post(
-                  "https://api-free.deepl.com/v2/translate",
-                  data={
-                      "auth_key": DEEPL_API_KEY,
-                      "text": title,
-                      "target_lang": "JA"
-                  }
-              )
-              jp_title = resp.json()["translations"][0]["text"]
+          def deepl_translate(text: str, target_lang: str = "JA") -> str:
+            r = requests.post(
+              "https://api-free.deepl.com/v2/translate",
+              data={"auth_key": DEEPL_API_KEY, "text": text, "target_lang": target_lang},
+              timeout=30
+            )
+            if r.status_code != 200:
+              print("[DeepL ERROR]", r.status_code, r.text[:300])
+              return text
+            return r.json()["translations"][0]["text"]
 
-              # Add to Notion
-              notion_payload = {
-                  "parent": {"database_id": NOTION_DB_DRAFT_ID},
-                  "properties": {
-                      "記事タイトル": {"title": [{"text": {"content": jp_title}}]},
-                      "URL": {"url": url},
-                      "Status": {"select": {"name": "draft"}}
-                  }
+          def notion_create_page(title_ja: str, url: str):
+            payload = {
+              "parent": {"database_id": NOTION_DB_DRAFT_ID},
+              "properties": {
+                "Title":  {"title":  [{"text": {"content": title_ja}}]},
+                "URL":    {"url": url},
+                "Select": {"select": {"name": "draft"}}
               }
-              requests.post(
-                  "https://api.notion.com/v1/pages",
-                  headers={
-                      "Authorization": f"Bearer {NOTION_TOKEN}",
-                      "Content-Type": "application/json",
-                      "Notion-Version": "2022-06-28"
-                  },
-                  json=notion_payload
-              )
+            }
+            r = requests.post(
+              "https://api.notion.com/v1/pages",
+              headers={
+                "Authorization": f"Bearer {NOTION_TOKEN}",
+                "Content-Type": "application/json",
+                "Notion-Version": "2022-06-28",
+              },
+              data=json.dumps(payload),
+              timeout=30
+            )
+            if r.status_code >= 300:
+              print("[Notion ERROR]", r.status_code, r.text[:500])
+              return None
+            data = r.json()
+            print("Created draft page:", data.get("id"))
+            return data
 
-          print("✅ News fetched and queued in Notion")
+          print("[INFO] Fetching:", RSS_URL)
+          feed = feedparser.parse(RSS_URL)
+          print("[INFO] Entries:", len(feed.entries))
+          for entry in feed.entries[:5]:
+            title_en = entry.title
+            url = entry.link
+            title_ja = deepl_translate(title_en, "JA")
+            print("-", title_en, "→", title_ja)
+            notion_create_page(title_ja, url)
+            time.sleep(1)  # 軽いレートリミット対策
+          print("✅ Finished creating drafts in Notion")
           EOF
+YAML
+
+git add .github/workflows/fetch_and_queue.yml
+git commit -m "fix(notion): map to Title/URL/Select + better logging"
+git push origin main
