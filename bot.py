@@ -9,7 +9,7 @@ print(f"[DEBUG] X_API_KEY={X_API_KEY}")
 print(f"[DEBUG] DEEPL_API_KEY={DEEPL_API_KEY}")
 
 # RSS URL（Reuters World News）
-RSS_URL = "https://feeds.reuters.com/reuters/worldNews"
+RSS_URL = "https://feeds.bbci.co.uk/news/world/rss.xml"
 
 print(f"[INFO] Fetching RSS feed from: {RSS_URL}")
 feed = feedparser.parse(RSS_URL)
