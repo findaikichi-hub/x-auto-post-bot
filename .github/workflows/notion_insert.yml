@@ -1,9 +1,9 @@
 name: Notion RSS Insert
 
 on:
-  workflow_dispatch:  # 手動実行用
+  workflow_dispatch:
   schedule:
-    - cron: "0 * * * *"  # 毎時0分に実行（UTC基準）
+    - cron: "0 * * * *"
 
 jobs:
   insert-to-notion:
@@ -25,6 +25,6 @@ jobs:
         env:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}   # ← これ追加
-          RSS_URL: "https://www3.nhk.or.jp/rss/news/cat0.xml"
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          RSS_URL: ${{ secrets.RSS_URL }}
         run: python scripts/notion_insert.py
