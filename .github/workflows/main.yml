@@ -1,4 +1,4 @@
-﻿name: Run Bot
+name: Run Bot
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
           python-version: "3.x"
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests feedparser
 
       - name: Run bot
         env:
