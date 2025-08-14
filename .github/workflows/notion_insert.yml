@@ -1,19 +1,24 @@
 (
-echo name: Notion Insert Workflow
+echo name: Notion Insert
 echo.
 echo on:
 echo.  workflow_dispatch:
 echo.
 echo jobs:
-echo.  insert-to-notion:
+echo.  run-script:
 echo.    runs-on: ubuntu-latest
 echo.    steps:
-echo.      - uses: actions/checkout@v3
-echo.      - uses: actions/setup-python@v4
+echo.      - name: Checkout repository
+echo.        uses: actions/checkout@v3
+echo.
+echo.      - name: Set up Python
+echo.        uses: actions/setup-python@v4
 echo.        with:
-echo.          python-version: '3.11'
+echo.          python-version: '3.x'
+echo.
 echo.      - name: Install dependencies
-echo.        run: pip install feedparser requests
+echo.        run: pip install feedparser requests python-dotenv
+echo.
 echo.      - name: Run script
 echo.        env:
 echo.          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
