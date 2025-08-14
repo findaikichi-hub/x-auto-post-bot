@@ -1,39 +1,54 @@
 import os
-import feedparser
 import requests
+import feedparser
 
-X_API_KEY = os.environ.get("X_API_KEY")
-DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY")
+# 環境変数からAPIキー取得
+X_API_KEY = os.getenv("X_API_KEY")
+DEEPL_API_KEY = os.getenv("DEEPL_API_KEY")
 
-print(f"[DEBUG] X_API_KEY={'***' if X_API_KEY else None}")
-print(f"[DEBUG] DEEPL_API_KEY={'***' if DEEPL_API_KEY else None}")
-
+DEEPL_API_URL = "https://api-free.deepl.com/v2/translate"  # 無料版エンドポイント
 RSS_URL = "https://feeds.bbci.co.uk/news/world/rss.xml"
 
 def translate_text(text, target_lang="JA"):
-    url = "https://api-free.deepl.com/v2/translate"
-    data = {
-        "auth_key": DEEPL_API_KEY,
-        "text": text,
-        "target_lang": target_lang
-    }
+    if not DEEPL_API_KEY:
+        print("[ERROR] DEEPL_API_KEY is not set.")
+        return text
     try:
-        response = requests.post(url, data=data)
+        response = requests.post(
+            DEEPL_API_URL,
+            data={
+                "auth_key": DEEPL_API_KEY,
+                "text": text,
+                "target_lang": target_lang
+            }
+        )
         response.raise_for_status()
         result = response.json()
-        return result["translations"][0]["text"]
-    except Exception as e:
-        print(f"[ERROR] DeepL translation failed: {e}")
+        if "translations" in result:
+            return result["translations"][0]["text"]
+        else:
+            print("[ERROR] Unexpected DeepL API response:", result)
+            return text
+    except requests.RequestException as e:
+        print(f"Error:  DeepL translation failed: {e}")
         return text
 
-print(f"[INFO] Fetching RSS feed from: {RSS_URL}")
-feed = feedparser.parse(RSS_URL)
-print(f"[INFO] Found {len(feed.entries)} entries")
+def fetch_rss_entries():
+    print(f"[INFO] Fetching RSS feed from: {RSS_URL}")
+    feed = feedparser.parse(RSS_URL)
+    print(f"[INFO] Found {len(feed.entries)} entries")
+    return feed.entries
 
-for entry in feed.entries[:5]:
-    title_en = entry.title
-    link = entry.link
-    title_ja = translate_text(title_en)
-    print(f"- {title_en}")
-    print(f"  → {title_ja}")
-    print(f"  {link}")
+def main():
+    print(f"[DEBUG] X_API_KEY={'***' if X_API_KEY else 'NOT SET'}")
+    print(f"[DEBUG] DEEPL_API_KEY={'***' if DEEPL_API_KEY else 'NOT SET'}")
+
+    entries = fetch_rss_entries()
+    for entry in entries[:5]:  # 最新5件だけ処理
+        translated_title = translate_text(entry.title)
+        print(f"- {entry.title}")
+        print(f"  → {translated_title}")
+        print(f"  {entry.link}")
+
+if __name__ == "__main__":
+    main()
