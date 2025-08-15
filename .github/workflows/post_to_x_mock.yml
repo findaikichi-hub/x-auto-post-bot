@@ -54,37 +54,51 @@ jobs:
           _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           _SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: |
-          set -e
-          for s in _NOTION_API_KEY _NOTION_DATABASE_ID _SLACK_WEBHOOK_URL; do
-            if [ -z "${!s}" ]; then
-              echo "❌ Required secret is missing: ${s#_}" >&2
-              exit 1
-            fi
-          done
-          echo "✅ All required secrets for MOCK are present."
-
-      - name: Validate X secrets (preflight)
-        env:
           _X_API_KEY: ${{ secrets.X_API_KEY }}
           _X_API_SECRET: ${{ secrets.X_API_SECRET }}
           _X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           _X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          _X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }} # 任意
         run: |
           set -e
-          for k in _X_API_KEY _X_API_SECRET _X_ACCESS_TOKEN _X_ACCESS_SECRET; do
-            val="${!k}"
+          # 必須
+          for s in _NOTION_API_KEY _NOTION_DATABASE_ID _SLACK_WEBHOOK_URL _X_API_KEY _X_API_SECRET _X_ACCESS_TOKEN _X_ACCESS_SECRET; do
+            val="${!s}"
             if [ -z "$val" ]; then
-              echo "❌ Missing X secret: ${k#_}" >&2
+              echo "❌ Required secret is missing: ${s#_}" >&2
               exit 1
             fi
-            len=${#val}
-            if [ "$len" -lt 10 ]; then
-              echo "❌ X secret seems too short: ${k#_}" >&2
+            if [ ${#val} -lt 10 ]; then
+              echo "❌ Secret seems too short: ${s#_}" >&2
+              exit 1
+            fi
+            # 改行/CR混入検知
+            orig_len=$(printf %s "$val" | wc -c)
+            nolf_len=$(printf %s "$val" | tr -d '\n' | wc -c)
+            nor_len=$(printf %s "$val" | tr -d '\r' | wc -c)
+            if [ "$orig_len" -ne "$nolf_len" ] || [ "$orig_len" -ne "$nor_len" ]; then
+              echo "❌ Secret contains newline or CR: ${s#_}" >&2
               exit 1
             fi
           done
-          echo "✅ All X secrets are present and length OK."
+          # 任意
+          if [ -n "$_X_BEARER_TOKEN" ]; then
+            if [ ${#_X_BEARER_TOKEN} -lt 10 ]; then
+              echo "❌ X_BEARER_TOKEN seems too short." >&2
+              exit 1
+            fi
+          else
+            echo "ℹ️ Optional secret not set: X_BEARER_TOKEN"
+          fi
+          echo "✅ All required secrets for MOCK are present and look sane."
+
+      - name: Backup repository to local-like storage
+        run: |
+          set -e
+          BACKUP_DIR="local_backups/$(date +'%Y%m%d_%H%M%S')"
+          mkdir -p "$BACKUP_DIR"
+          rsync -av --exclude "local_backups" ./ "$BACKUP_DIR"/
+          echo "✅ Backup completed at $BACKUP_DIR"
 
       - name: Python syntax check (preflight)
         run: |
@@ -101,6 +115,7 @@ jobs:
           X_API_SECRET: ${{ secrets.X_API_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
         run: |
           set -e
           echo "$RUN_START_MSG"
