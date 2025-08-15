@@ -2,153 +2,34 @@ name: Notion Insert Production
 
 on:
   workflow_dispatch:
-    inputs:
-      title:
-        description: "Notionページのタイトル（未入力時は自動設定）"
-        required: false
-      status:
-        description: "ステータス（未入力時は 'Pending'）"
-        required: false
-      description:
-        description: "説明文"
-        required: false
 
 jobs:
-  insert-to-notion:
+  insert_mock:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Create Notion page via API
-        id: notion
-        env:
-          NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+      - name: Run mock Notion insert
         run: |
           set -e
-          TITLE_INPUT="${{ github.event.inputs.title }}"
-          STATUS_INPUT="${{ github.event.inputs.status }}"
-          DESCRIPTION_INPUT="${{ github.event.inputs.description }}"
+          echo "モックのNotion登録を実行中..."
+          # 実際の処理はここに記述（例: curlやpythonスクリプト呼び出し）
+          echo "Notion登録（モック）が成功しました"
 
-          if [ -z "$TITLE_INPUT" ]; then
-            TITLE_INPUT="Auto Title $(date +'%Y-%m-%d %H:%M:%S')"
-          fi
-          if [ -z "$STATUS_INPUT" ]; then
-            STATUS_INPUT="Pending"
-          fi
-
-          payload=$(jq -n \
-            --arg parent_id "$NOTION_DATABASE_ID" \
-            --arg title "$TITLE_INPUT" \
-            --arg status "$STATUS_INPUT" \
-            --arg description "$DESCRIPTION_INPUT" \
-            '{
-              parent: { database_id: $parent_id },
-              properties: {
-                Name: {
-                  title: [
-                    { text: { content: $title } }
-                  ]
-                },
-                Status: {
-                  select: { name: $status }
-                }
-              },
-              children: (
-                if $description != "" then
-                  [
-                    {
-                      object: "block",
-                      type: "paragraph",
-                      paragraph: {
-                        rich_text: [
-                          { text: { content: $description } }
-                        ]
-                      }
-                    }
-                  ]
-                else [] end
-              )
-            }'
-          )
-
-          RESPONSE=$(curl -s -w "%{http_code}" -o /tmp/notion_response.json \
-            -X POST "https://api.notion.com/v1/pages" \
-            -H "Authorization: Bearer $NOTION_API_TOKEN" \
-            -H "Content-Type: application/json" \
-            -H "Notion-Version: 2022-06-28" \
-            --data "$payload"
-          )
-
-          if [ "$RESPONSE" -ge 400 ]; then
-            echo "Notion API error (HTTP $RESPONSE)"
-            cat /tmp/notion_response.json
-            exit 1
-          fi
-
-      - name: Send Slack Notification (Success)
-        if: success()
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: |
-          set -e
-          TITLE_INPUT="${{ github.event.inputs.title }}"
-          STATUS_INPUT="${{ github.event.inputs.status }}"
-
-          if [ -z "$TITLE_INPUT" ]; then
-            TITLE_INPUT="Auto Title (default)"
-          fi
-          if [ -z "$STATUS_INPUT" ]; then
-            STATUS_INPUT="Pending"
-          fi
-
-          slack_payload=$(jq -n \
-            --arg text "✅ Notion登録が完了しました" \
-            --arg att_text "タイトル: $TITLE_INPUT\nステータス: $STATUS_INPUT" \
-            '{
-              text: $text,
-              attachments: [
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "Notion登録（モック）が成功しました",
+              "attachments": [
                 {
-                  color: "good",
-                  text: $att_text
+                  "color": "good",
+                  "text": "Notion登録（モック）が成功しました"
                 }
               ]
-            }'
-          )
-          curl -s -X POST -H 'Content-type: application/json' \
-            --data "$slack_payload" \
-            "$SLACK_WEBHOOK_URL"
-
-      - name: Send Slack Notification (Failure)
-        if: failure()
+            }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: |
-          set -e
-          TITLE_INPUT="${{ github.event.inputs.title }}"
-          STATUS_INPUT="${{ github.event.inputs.status }}"
-
-          if [ -z "$TITLE_INPUT" ]; then
-            TITLE_INPUT="Auto Title (default)"
-          fi
-          if [ -z "$STATUS_INPUT" ]; then
-            STATUS_INPUT="Pending"
-          fi
-
-          slack_payload=$(jq -n \
-            --arg text "❌ Notion登録に失敗しました" \
-            --arg att_text "タイトル: $TITLE_INPUT\nステータス: $STATUS_INPUT\n詳細はGitHub Actionsログを確認してください。" \
-            '{
-              text: $text,
-              attachments: [
-                {
-                  color: "danger",
-                  text: $att_text
-                }
-              ]
-            }'
-          )
-          curl -s -X POST -H 'Content-type: application/json' \
-            --data "$slack_payload" \
-            "$SLACK_WEBHOOK_URL"
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
