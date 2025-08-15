@@ -42,15 +42,30 @@ jobs:
           fi
           echo "✅ RSS_URL is present (DEEPL_API_KEY is optional for MOCK)."
 
+      - name: Backup repository to local-like storage
+        run: |
+          set -e
+          BACKUP_DIR="local_backups/$(date +'%Y%m%d_%H%M%S')"
+          mkdir -p "$BACKUP_DIR"
+          cp -R . "$BACKUP_DIR/"
+          echo "✅ Backup completed at $BACKUP_DIR"
+
+      - name: Sync repository from GitHub to runner workspace
+        run: |
+          set -e
+          git fetch --all
+          git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
+          echo "✅ Repository synced with GitHub origin"
+
       - name: Run mock Notion insert
         env:
           RSS_URL: ${{ secrets.RSS_URL }}
           DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
         run: |
           set -e
-          echo "モックのNotion登録を実行中..."
+          echo "=== モック Notion 登録開始 ==="
           python scripts/notion_mock.py
-          echo "Notion登録（モック）が成功しました"
+          echo "✅ Notion登録（モック）が成功しました"
 
       - name: Send Slack notification (success)
         if: success()
