@@ -1,0 +1,32 @@
+name: Notion Insert (Mock)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  notion-insert-mock:
+    runs-on: ubuntu-latest
+    env:
+      USE_MOCK: "true"
+      NOTION_API_KEY: ""
+      NOTION_DATABASE_ID: ""
+      DEEPL_API_KEY: ""
+      RSS_URL: ${{ secrets.RSS_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install feedparser requests
+
+      - name: Run Notion insert script in mock mode
+        run: |
+          python scripts/notion_insert.py
