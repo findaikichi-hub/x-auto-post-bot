@@ -3,15 +3,12 @@ name: Notion Insert Prod
 on:
   workflow_dispatch:
   schedule:
-    # 毎時02分（UTC）に発火。指標発表のタイムラグ考慮
     - cron: "2 * * * *"
 
-# 同時実行の衝突を防止（スケジュール重複対策）
 concurrency:
   group: notion-insert-prod
   cancel-in-progress: true
 
-# 最小権限
 permissions:
   contents: read
 
@@ -39,9 +36,7 @@ jobs:
         run: |
           set -e
           python -m pip install --upgrade pip
-          # 必須パッケージ（deep-translator を含む）
           python -m pip install feedparser deep-translator requests beautifulsoup4
-          # 依存の存在を検証（無ければ即fail）
           python - <<'PY'
           import sys, pkgutil
           required = ["feedparser","deep_translator","requests","bs4"]
@@ -78,7 +73,6 @@ jobs:
       - name: Python syntax check (preflight)
         run: |
           set -e
-          # 実行前に構文エラーを検出して即failさせる
           python -m py_compile scripts/notion_insert.py
           echo "✅ Syntax OK"
 
@@ -89,10 +83,6 @@ jobs:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          X_API_KEY: ${{ secrets.X_API_KEY }}
-          X_API_SECRET: ${{ secrets.X_API_SECRET }}
-          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
         run: |
           set -e
           echo "$RUN_START_MSG"
@@ -106,17 +96,4 @@ jobs:
         uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
-            { "text": "${{ env.SLACK_SUCCESS_TEXT }}" }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-
-      - name: Send Slack notification (failure)
-        if: failure()
-        uses: slackapi/slack-github-action@v1.24.0
-        with:
-          payload: |
-            { "text": "${{ env.SLACK_FAILURE_TEXT }}" }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+            { "text": "${{ env.SLACK_SUCCESS_
