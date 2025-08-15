@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  insert_mock:
+  insert:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -14,7 +14,7 @@ jobs:
         run: |
           set -e
           echo "モックのNotion登録を実行中..."
-          # 実際の処理はここに記述（例: curlやpythonスクリプト呼び出し）
+          python3 scripts/notion_mock.py
           echo "Notion登録（モック）が成功しました"
 
       - name: Send Slack notification
