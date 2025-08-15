@@ -3,12 +3,8 @@ name: Notion Insert Prod
 on:
   workflow_dispatch:
   schedule:
-    # UTC基準で6時間間隔（00/06/12/18）、各時間の02分に発火
-    # アジア始業、欧州朝、米統計、米午後帯をカバー
-    - cron: "2 0 * * *"
-    - cron: "2 6 * * *"
-    - cron: "2 12 * * *"
-    - cron: "2 18 * * *"
+    # 毎時02分（UTC）に発火。指標発表のタイムラグ考慮
+    - cron: "2 * * * *"
 
 # 同時実行の衝突を防止（スケジュール重複対策）
 concurrency:
