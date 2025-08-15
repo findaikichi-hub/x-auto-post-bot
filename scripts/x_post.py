@@ -1,16 +1,11 @@
 import os
 import re
-import hmac
-import time
 import json
-import base64
-import hashlib
-import random
-import string
-import urllib.parse
 from datetime import datetime, timezone
+from typing import List, Dict
 
 import requests
+import tweepy
 
 # ===== Secrets（Actionsから注入）=====
 NOTION_API_KEY = os.environ["NOTION_API_KEY"]
@@ -22,27 +17,32 @@ X_API_SECRET = os.environ["X_API_SECRET"]
 X_ACCESS_TOKEN = os.environ["X_ACCESS_TOKEN"]
 X_ACCESS_SECRET = os.environ["X_ACCESS_SECRET"]
 
+# ===== 定数 =====
 NOTION_VERSION = "2022-06-28"
 USER_AGENT = "notion-x-mvp/1.0 (prod)"
-
-DRY_RUN = os.environ.get("DRY_RUN", "").lower() in {"1", "true", "yes"}  # 本番でも緊急時に有効化可
+TCO_URL_LENGTH = 23  # t.co の固定長換算
+DRY_RUN = os.environ.get("DRY_RUN", "").lower() in {"1", "true", "yes"}
 
 # ===== 共通ユーティリティ =====
-def notify_slack(message: str):
-    payload = {"text": message}
-    res = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=15)
-    res.raise_for_status()
+def notify_slack(message: str) -> None:
+    try:
+        res = requests.post(SLACK_WEBHOOK_URL, json={"text": message}, timeout=15)
+        res.raise_for_status()
+    except Exception as e:
+        print(f"Slack通知失敗: {e} :: {message}")
 
 def _np(prop, key, default=None):
     return (prop or {}).get(key, default)
 
-def plain_title(prop):
+def plain_title(prop) -> str:
     return "".join([_np(t, "plain_text", "") for t in (prop or {}).get("title", [])])
 
-def plain_text(prop):
+def plain_text(prop) -> str:
     return "".join([_np(t, "plain_text", "") for t in (prop or {}).get("rich_text", [])])
 
-def notion_query_approved_unposted():
+# ===== Notion I/O =====
+def notion_query_approved_unposted() -> List[Dict[str, str]]:
+    """Select=approved AND Posted=false を全件取得（ページネーション対応）"""
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
@@ -63,16 +63,17 @@ def notion_query_approved_unposted():
     has_more = True
     next_cursor = None
     while has_more:
+        body = dict(payload)
         if next_cursor:
-            payload["start_cursor"] = next_cursor
-        res = requests.post(url, headers=headers, json=payload, timeout=30)
+            body["start_cursor"] = next_cursor
+        res = requests.post(url, headers=headers, json=body, timeout=30)
         res.raise_for_status()
         data = res.json()
         results.extend(data.get("results", []))
         has_more = data.get("has_more", False)
         next_cursor = data.get("next_cursor")
 
-    pages = []
+    pages: List[Dict[str, str]] = []
     for page in results:
         props = page.get("properties", {})
         pages.append({
@@ -83,7 +84,8 @@ def notion_query_approved_unposted():
         })
     return pages
 
-def notion_mark_posted(page_id: str, tweet_id: str):
+def notion_mark_posted(page_id: str, tweet_id: str) -> None:
+    """Posted=true / TweetID / PostedAt を反映"""
     url = f"https://api.notion.com/v1/pages/{page_id}"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
@@ -95,18 +97,22 @@ def notion_mark_posted(page_id: str, tweet_id: str):
     payload = {
         "properties": {
             "Posted": {"checkbox": True},
-            "TweetID": {"rich_text": [{"text": {"content": tweet_id}}]},
+            "TweetID": {"rich_text": [{"text": {"content": str(tweet_id)}}]},
             "PostedAt": {"date": {"start": now_utc}},
         }
     }
     res = requests.patch(url, headers=headers, json=payload, timeout=30)
     res.raise_for_status()
 
+# ===== ツイート整形 =====
 URL_RE = re.compile(r"https?://\S+")
+
 def twitter_length(text: str) -> int:
-    return len(URL_RE.sub("x" * 23, text))
+    """URLをt.co換算(TCO_URL_LENGTH)で数え直した文字数"""
+    return len(URL_RE.sub("x" * TCO_URL_LENGTH, text))
 
 def build_tweet(title: str, summary: str, url: str) -> str:
+    """タイトル/要約/URLから280文字内の最適組合せを生成"""
     title = (title or "").strip()
     summary = (summary or "").strip()
     url = (url or "").strip()
@@ -116,93 +122,79 @@ def build_tweet(title: str, summary: str, url: str) -> str:
         candidate = f"{title}\n{summary}\n{url}" if title else f"{summary}\n{url}"
         if twitter_length(candidate) <= 280:
             return candidate
-        remain = 280 - twitter_length(f"{title}\n\n{url}" if title else f"\n{url}") - 1
+        remain = 280 - twitter_length((f"{title}\n\n{url}" if title else f"\n{url}")) - 1
         remain = max(remain, 0)
-        trimmed = summary
-        if len(trimmed) > remain:
-            trimmed = trimmed[: max(remain - 1, 0)] + ("…" if remain > 0 else "")
+        trimmed = summary if len(summary) <= remain else (summary[: max(remain - 1, 0)] + ("…" if remain > 0 else ""))
         candidate = f"{title}\n{trimmed}\n{url}" if title else f"{trimmed}\n{url}"
         if twitter_length(candidate) <= 280:
             return candidate
 
     if title:
-        max_title_len = 280 - 23 - 1
+        max_title_len = 280 - TCO_URL_LENGTH - 1
         if len(title) > max_title_len:
             title = title[: max_title_len - 1] + "…"
         return f"{title}\n{url}"
     return url
 
-# ===== OAuth 1.0a 署名 & 投稿 =====
-def _percent_encode(s: str) -> str:
-    return urllib.parse.quote(s, safe="~")
+# ===== X(v2) クライアント =====
+def get_twitter_client() -> tweepy.Client:
+    return tweepy.Client(
+        consumer_key=X_API_KEY,
+        consumer_secret=X_API_SECRET,
+        access_token=X_ACCESS_TOKEN,
+        access_token_secret=X_ACCESS_SECRET,
+        wait_on_rate_limit=True,
+    )
 
-def _nonce(n: int = 32) -> str:
-    return "".join(random.choice(string.ascii_letters + string.digits) for _ in range(n))
+def verify_x_credentials(client: tweepy.Client) -> None:
+    """投稿前プレチェック。401や権限エラーを早期検出して中断"""
+    try:
+        me = client.get_me()
+        data = getattr(me, "data", None)
+        if not data or not getattr(data, "id", None):
+            raise RuntimeError(f"get_me() returned invalid data: {data}")
+        notify_slack(f"X認証OK: @{getattr(data, 'username', 'unknown')} (id={data.id})")
+    except tweepy.TweepyException as e:
+        detail = getattr(e, "response", None)
+        body = None
+        if detail is not None:
+            try:
+                body = detail.json()
+            except Exception:
+                body = detail.text
+            raise RuntimeError(f"X認証失敗 status={detail.status_code}, body={body}") from e
+        raise
 
-def _timestamp() -> str:
-    return str(int(time.time()))
-
-def sign_and_post_status(status_text: str) -> str:
-    """
-    v1.1 statuses/update.json に投稿し、ツイートID（文字列）を返す。
-    失敗時は例外を送出。
-    """
-    url = "https://api.twitter.com/1.1/statuses/update.json"
-    method = "POST"
-
-    oauth_params = {
-        "oauth_consumer_key": X_API_KEY,
-        "oauth_nonce": _nonce(),
-        "oauth_signature_method": "HMAC-SHA1",
-        "oauth_timestamp": _timestamp(),
-        "oauth_token": X_ACCESS_TOKEN,
-        "oauth_version": "1.0",
-    }
-
-    # パラメータ結合（POST bodyのstatusも署名対象）
-    params = {**oauth_params, "status": status_text}
-    # 署名用正規化
-    sorted_items = sorted((k, v) for k, v in params.items())
-    param_str = "&".join(f"{_percent_encode(k)}={_percent_encode(v)}" for k, v in sorted_items)
-
-    base_str = "&".join([
-        method,
-        _percent_encode(url),
-        _percent_encode(param_str),
-    ])
-
-    signing_key = "&".join([_percent_encode(X_API_SECRET), _percent_encode(X_ACCESS_SECRET)])
-    digest = hmac.new(signing_key.encode("utf-8"), base_str.encode("utf-8"), hashlib.sha1).digest()
-    signature = base64.b64encode(digest).decode("utf-8")
-
-    oauth_params["oauth_signature"] = signature
-
-    # Authorizationヘッダ作成（statusはボディ側）
-    auth_header = "OAuth " + ", ".join([f'{_percent_encode(k)}="{_percent_encode(v)}"' for k, v in oauth_params.items()])
-    headers = {
-        "Authorization": auth_header,
-        "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": USER_AGENT,
-    }
-
-    res = requests.post(url, headers=headers, data={"status": status_text}, timeout=30)
-    if res.status_code >= 400:
-        raise RuntimeError(f"X API error {res.status_code}: {res.text}")
-
-    data = res.json()
-    # v1.1 レスポンス: id_str がツイートID
-    tweet_id = data.get("id_str") or str(data.get("id"))
-    if not tweet_id:
-        raise RuntimeError(f"Tweet posted but id is missing: {json.dumps(data)[:200]}")
-    return tweet_id
+def post_to_x_v2(client: tweepy.Client, status_text: str) -> str:
+    """v2 create_tweet で投稿し、ツイートID（文字列）を返す"""
+    try:
+        resp = client.create_tweet(text=status_text)
+        data = getattr(resp, "data", None) or {}
+        tweet_id = str(data.get("id") or "")
+        if not tweet_id:
+            raise RuntimeError(f"Unexpected response: {data}")
+        return tweet_id
+    except tweepy.TweepyException as e:
+        detail = getattr(e, "response", None)
+        if detail is not None:
+            try:
+                body = detail.json()
+            except Exception:
+                body = detail.text
+            raise RuntimeError(f"X投稿失敗 status={detail.status_code}, body={body}") from e
+        raise
 
 # ===== メイン =====
-def main():
+def main() -> None:
+    notify_slack("=== X投稿処理開始（v2）===")
     try:
         pages = notion_query_approved_unposted()
         if not pages:
-            notify_slack("X投稿対象は0件でした。")
+            notify_slack("新規投稿対象（approved & Posted=false）はありません。")
             return
+
+        client = get_twitter_client()
+        verify_x_credentials(client)
 
         posted = 0
         previews = []
@@ -210,18 +202,29 @@ def main():
         for p in pages:
             tweet = build_tweet(p["title"], p["summary"], p["url"])
             if DRY_RUN:
-                previews.append(f"- {p['id']}: {tweet}")
+                previews.append(f"[DRY_RUN] {p['id']}: {tweet}")
                 continue
 
             try:
-                tweet_id = sign_and_post_status(tweet)
+                tweet_id = post_to_x_v2(client, tweet)
                 notion_mark_posted(p["id"], tweet_id)
                 posted += 1
                 previews.append(f"- OK {p['id']} → {tweet_id}")
+                notify_slack(f"✅ 投稿成功: id={tweet_id} | title={p['title']}")
             except Exception as e:
                 previews.append(f"- NG {p['id']}: {str(e)}")
+                notify_slack(f"❌ 投稿失敗: page={p['id']} | url={p['url']} | error={e}")
 
         if DRY_RUN:
             notify_slack("（DRY_RUN）X投稿プレビュー:\n" + "\n".join(previews[:10]) + ("" if len(previews) <= 10 else "\n…"))
         else:
-            notify_slack(f"X投稿完了: {posted}件 / 対象 {len(pages)}件\n" + "\n".join(previews[:10]) +_
+            notify_slack(f"X投稿完了: {posted}件 / 対象 {len(pages)}件\n" + "\n".join(previews[:10]) + ("" if len(previews) <= 10 else "\n…"))
+
+    except Exception as e:
+        notify_slack(f"❌ X投稿処理エラー: {e}")
+        raise
+    finally:
+        notify_slack("=== X投稿処理終了（v2）===")
+
+if __name__ == "__main__":
+    main()
