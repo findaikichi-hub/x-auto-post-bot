@@ -65,6 +65,7 @@ jobs:
           echo "=== 本番 Notion 登録開始 ==="
           python scripts/notion_insert.py
           echo "✅ 本番 Notion 登録が完了しました"
+          echo "=== 本番 Notion 登録終了 ==="
 
       - name: Send Slack notification (success)
         if: success()
