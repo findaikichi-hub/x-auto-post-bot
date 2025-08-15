@@ -56,9 +56,11 @@ jobs:
           DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
         run: |
           set -e
+          echo "=== 運用テスト実行中 ==="
           echo "モックのNotion登録を実行中..."
           python scripts/notion_mock.py
           echo "Notion登録（モック）が成功しました"
+          echo "=== 運用テスト終了 ==="
 
       - name: Send Slack notification (success)
         if: success()
