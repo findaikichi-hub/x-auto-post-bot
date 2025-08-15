@@ -10,17 +10,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install required Python packages
         run: |
           set -e
-          pip install --upgrade pip
-          pip install feedparser
+          pip install feedparser deep-translator requests python-dotenv notion-client beautifulsoup4
 
       - name: Run mock Notion insert
         run: |
           set -e
           echo "モックのNotion登録を実行中..."
-          python3 scripts/notion_mock.py
+          python scripts/notion_mock.py
           echo "Notion登録（モック）が成功しました"
 
       - name: Send Slack notification
