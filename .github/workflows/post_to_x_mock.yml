@@ -3,7 +3,6 @@ name: Post to X Mock
 on:
   workflow_dispatch:
 
-# 同時実行の衝突を防止
 concurrency:
   group: post-to-x-mock
   cancel-in-progress: true
@@ -65,6 +64,28 @@ jobs:
           done
           echo "✅ All required secrets for MOCK are present."
 
+      - name: Validate X secrets (preflight)
+        env:
+          _X_API_KEY: ${{ secrets.X_API_KEY }}
+          _X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          _X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          _X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+        run: |
+          set -e
+          for k in _X_API_KEY _X_API_SECRET _X_ACCESS_TOKEN _X_ACCESS_SECRET; do
+            val="${!k}"
+            if [ -z "$val" ]; then
+              echo "❌ Missing X secret: ${k#_}" >&2
+              exit 1
+            fi
+            len=${#val}
+            if [ "$len" -lt 10 ]; then
+              echo "❌ X secret seems too short: ${k#_}" >&2
+              exit 1
+            fi
+          done
+          echo "✅ All X secrets are present and length OK."
+
       - name: Python syntax check (preflight)
         run: |
           set -e
@@ -76,6 +97,10 @@ jobs:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
         run: |
           set -e
           echo "$RUN_START_MSG"
