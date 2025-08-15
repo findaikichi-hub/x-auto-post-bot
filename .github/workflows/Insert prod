@@ -1,4 +1,4 @@
-name: Notion Insert
+name: Notion Insert prod
 
 on:
   workflow_dispatch:
@@ -30,22 +30,21 @@ jobs:
               sys.exit(1)
           PY
 
-      - name: Validate required secrets
+      - name: Validate required secrets for PRODUCTION
         env:
           _RSS_URL: ${{ secrets.RSS_URL }}
           _DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
           _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          _SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           set -e
-          for secret in _RSS_URL _NOTION_API_KEY _NOTION_DATABASE_ID _SLACK_WEBHOOK_URL; do
+          for secret in _RSS_URL _NOTION_API_KEY _NOTION_DATABASE_ID; do
             if [ -z "${!secret}" ]; then
               echo "❌ Required secret is missing: $secret" >&2
               exit 1
             fi
           done
-          echo "✅ All required secrets are present."
+          echo "✅ All required secrets for PRODUCTION are present."
 
       - name: Backup repository to local-like storage
         run: |
@@ -67,7 +66,6 @@ jobs:
           DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           set -e
           echo "=== 本番 Notion 登録開始 ==="
