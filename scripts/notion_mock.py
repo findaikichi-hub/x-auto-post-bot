@@ -4,12 +4,16 @@ import feedparser
 from datetime import datetime
 from deep_translator import DeeplTranslator
 
-# ===== 設定 =====
+# ===== 設定（Secrets をそのまま参照）=====
 NOTION_API_KEY = os.environ["NOTION_API_KEY"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
-DEEPL_API_KEY = os.environ["DEEPL_API_KEY"]
+DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY", "")  # 任意
 RSS_URL = os.environ["RSS_URL"]
 SLACK_WEBHOOK_URL = os.environ["SLACK_WEBHOOK_URL"]
+
+# 言語コードは deep_translator 仕様に合わせて小文字で固定
+SRC_LANG = "en"
+TGT_LANG = "ja"
 
 # ===== 関数 =====
 def get_existing_urls():
@@ -55,8 +59,12 @@ def filter_new_articles(articles, existing_urls):
 
 
 def translate_text(text):
-    """DeepLで日本語に翻訳"""
-    translator = DeeplTranslator(api_key=DEEPL_API_KEY, source="EN", target="JA")
+    """DeepLで日本語に翻訳（DEEPL_API_KEY が未設定なら原文返却）"""
+    if not text:
+        return ""
+    if not DEEPL_API_KEY:
+        return text
+    translator = DeeplTranslator(api_key=DEEPL_API_KEY, source=SRC_LANG, target=TGT_LANG)
     return translator.translate(text)
 
 
@@ -99,12 +107,13 @@ def main():
         feed = feedparser.parse(RSS_URL)
         articles = []
         for entry in feed.entries:
-            translated_title = translate_text(entry.title)
-            summary = entry.summary if hasattr(entry, "summary") else ""
-            translated_summary = translate_text(summary) if summary else ""
+            title_raw = getattr(entry, "title", "")
+            summary_raw = getattr(entry, "summary", "") if hasattr(entry, "summary") else ""
+            translated_title = translate_text(title_raw)
+            translated_summary = translate_text(summary_raw) if summary_raw else ""
             articles.append({
                 "title": translated_title,
-                "url": entry.link,
+                "url": getattr(entry, "link", ""),
                 "summary": translated_summary
             })
 
@@ -112,19 +121,4 @@ def main():
         existing_urls = get_existing_urls()
 
         # 新規記事だけ抽出
-        new_articles = filter_new_articles(articles, existing_urls)
-
-        # 登録処理
-        for article in new_articles:
-            add_to_notion(article)
-
-        # Slack通知
-        notify_slack(f"新規登録: {len(new_articles)}件, スキップ: {len(articles) - len(new_articles)}件")
-
-    except Exception as e:
-        notify_slack(f"エラー発生: {str(e)}")
-        raise
-
-
-if __name__ == "__main__":
-    main()
+        new_articles = fil_
