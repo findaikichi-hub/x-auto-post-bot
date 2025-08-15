@@ -2,6 +2,9 @@ name: Notion Insert Mock
 
 on:
   workflow_dispatch:
+  schedule:
+    # JST 07:02, 13:02, 17:02, 23:02 発火（UTC換算で前日22:02, 当日04:02, 08:02, 14:02）
+    - cron: "2 22,4,8,14 * * *"
 
 # 同時実行の衝突を防止（手動連打対策）
 concurrency:
