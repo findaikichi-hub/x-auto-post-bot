@@ -27,11 +27,8 @@ jobs:
           set +e
           python <<'PYCODE'
           import json
-          import sys
 
-          # モック用ダミー実行
           try:
-              # 実際にはここでNotion API呼び出し
               result = {"status": "success", "error_message": ""}
           except Exception as e:
               result = {"status": "failure", "error_message": str(e)}
@@ -63,9 +60,10 @@ jobs:
           fi
 
           jq -n \
+            --arg top_text "$MESSAGE" \
             --arg text "$MESSAGE" \
             --arg color "$COLOR" \
-            '{attachments: [{color: $color, text: $text}]}' > slack_payload.json
+            '{text: $top_text, attachments: [{color: $color, text: $text}]}' > slack_payload.json
 
       - name: Send to Slack
         uses: slackapi/slack-github-action@v1.24.0
