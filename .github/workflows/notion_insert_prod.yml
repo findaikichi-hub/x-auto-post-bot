@@ -2,7 +2,7 @@ name: Notion Insert (Production)
 
 on:
   schedule:
-    - cron: "0 * * * *"  # 毎時0分
+    - cron: "0 * * * *"  # 毎時0分に実行
   workflow_dispatch:
 
 jobs:
@@ -27,7 +27,8 @@ jobs:
       - name: Install dependencies
         run: pip install feedparser requests
 
-      - name: Run Notion Insert (Production)
-        run: |
-          export PYTHONPATH="${GITHUB_WORKSPACE}"
-          python scripts/notion_insert.py
+      - name: Set PYTHONPATH
+        run: export PYTHONPATH="${GITHUB_WORKSPACE}"
+
+      - name: Run Notion Insert
+        run: python scripts/notion_insert.py
