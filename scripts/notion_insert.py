@@ -2,6 +2,7 @@ import os
 import requests
 import feedparser
 from deep_translator import DeeplTranslator
+from bs4 import BeautifulSoup
 
 # ===== 設定（Secrets をそのまま参照。任意は .get()）=====
 NOTION_API_KEY = os.environ["NOTION_API_KEY"]
@@ -14,14 +15,26 @@ DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY", "")  # 任意
 SRC_LANG = "en"
 TGT_LANG = "ja"
 
-# ===== 関数 =====
+NOTION_VERSION = "2022-06-28"
+NOTION_DB_QUERY_URL = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
+NOTION_CREATE_PAGE_URL = "https://api.notion.com/v1/pages"
+
+# ===== ヘルパー =====
+def strip_html(text: str) -> str:
+    """HTMLを除去してプレーンテキスト化（失敗時は原文返却）"""
+    if not text:
+        return ""
+    try:
+        return BeautifulSoup(text, "html.parser").get_text(separator=" ", strip=True)
+    except Exception:
+        return text
+
 def get_existing_urls():
     """Notionの下書きDBから既存URL一覧を取得（重複登録防止用）"""
-    url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
         "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28",
+        "Notion-Version": NOTION_VERSION,
     }
 
     existing_urls = set()
@@ -33,7 +46,7 @@ def get_existing_urls():
         if next_cursor:
             payload["start_cursor"] = next_cursor
 
-        res = requests.post(url, headers=headers, json=payload, timeout=30)
+        res = requests.post(NOTION_DB_QUERY_URL, headers=headers, json=payload, timeout=30)
         res.raise_for_status()
         data = res.json()
 
@@ -58,22 +71,25 @@ def filter_new_articles(articles, existing_urls):
 
 
 def translate_text(text):
-    """DeepLで日本語に翻訳（DEEPL_API_KEY が未設定なら原文返却）"""
+    """DeepLで日本語に翻訳（DEEPL_API_KEY が未設定 or 失敗時は原文返却）"""
     if not text:
         return ""
     if not DEEPL_API_KEY:
         return text
-    translator = DeeplTranslator(api_key=DEEPL_API_KEY, source=SRC_LANG, target=TGT_LANG)
-    return translator.translate(text)
+    try:
+        translator = DeeplTranslator(api_key=DEEPL_API_KEY, source=SRC_LANG, target=TGT_LANG)
+        return translator.translate(text)
+    except Exception:
+        # DeepLエラー時は原文で続行
+        return text
 
 
 def add_to_notion(article):
     """記事をNotionの下書きDBに登録（Select = draft）"""
-    url = "https://api.notion.com/v1/pages"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
         "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28",
+        "Notion-Version": NOTION_VERSION,
     }
     payload = {
         "parent": {"database_id": NOTION_DATABASE_ID},
@@ -83,7 +99,7 @@ def add_to_notion(article):
             "Select": {"select": {"name": "draft"}},
         },
     }
-    res = requests.post(url, headers=headers, json=payload, timeout=30)
+    res = requests.post(NOTION_CREATE_PAGE_URL, headers=headers, json=payload, timeout=30)
     res.raise_for_status()
 
 
@@ -108,8 +124,11 @@ def main():
                 # タイトル or URL 無しはスキップ（ログはSlackに載せない）
                 continue
 
+            # summaryはHTMLをプレーンテキスト化
+            summary_clean = strip_html(summary_raw) if summary_raw else ""
+
             translated_title = translate_text(title_raw)
-            translated_summary = translate_text(summary_raw) if summary_raw else ""
+            translated_summary = translate_text(summary_clean) if summary_clean else ""
 
             articles.append(
                 {
@@ -128,7 +147,9 @@ def main():
             add_to_notion(article)
 
         # Slack通知
-        notify_slack(f"新規登録: {len(new_articles)}件 / 取得: {len(articles)}件 / 重複スキップ: {len(articles) - len(new_articles)}件")
+        notify_slack(
+            f"新規登録: {len(new_articles)}件 / 取得: {len(articles)}件 / 重複スキップ: {len(articles) - len(new_articles)}件"
+        )
 
     except Exception as e:
         # 失敗通知してリスロー（Actions failure に反映）
