@@ -4,82 +4,52 @@ on:
   workflow_dispatch:
 
 jobs:
-  insert_mock:
+  notion-insert-mock:
     runs-on: ubuntu-latest
+    env:
+      RSS_URL: ${{ secrets.RSS_URL }}
+      DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+      NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+      NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
     steps:
-      - name: Checkout repository
+      - name: チェックアウト
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Python セットアップ
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
-      - name: Install & verify Python dependencies
+      - name: 依存パッケージインストール
         run: |
-          set -e
           python -m pip install --upgrade pip
-          python -m pip install feedparser deep-translator requests beautifulsoup4
-          python - <<'PY'
-          import sys, pkgutil
-          required = ["feedparser","deep_translator","requests","bs4"]
-          missing = [m for m in required if pkgutil.find_loader(m) is None]
-          if missing:
-              print("Missing modules:", ", ".join(missing), file=sys.stderr)
-              sys.exit(1)
-          PY
+          pip install -r requirements.txt
 
-      - name: Validate required secrets for MOCK
-        env:
-          _RSS_URL: ${{ secrets.RSS_URL }}
-        run: |
-          set -e
-          if [ -z "${_RSS_URL}" ]; then
-            echo "❌ Required secret is missing: RSS_URL" >&2
-            exit 1
-          fi
-          echo "✅ RSS_URL is present."
-
-      - name: Backup repository to local-like storage
-        run: |
-          set -e
-          BACKUP_DIR="local_backups/$(date +'%Y%m%d_%H%M%S')"
-          mkdir -p "$BACKUP_DIR"
-          rsync -av --exclude "local_backups" ./ "$BACKUP_DIR"/
-          echo "✅ Backup completed at $BACKUP_DIR"
-
-      - name: Run mock Notion insert
-        env:
-          RSS_URL: ${{ secrets.RSS_URL }}
-          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
-          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      - name: モックのNotion登録を実行
         run: |
           set -e
           echo "=== 運用テスト実行中 ==="
           echo "モックのNotion登録を実行中..."
           python scripts/notion_mock.py
-          echo "Notion登録（モック）が成功しました"
-          echo "=== 運用テスト終了 ==="
 
-      - name: Send Slack notification (success)
+      - name: Slack通知（成功時）
         if: success()
-        uses: slackapi/slack-github-action@v1.24.0
-        with:
-          payload: |
-            { "text": "✅ Notion登録（モック）が成功しました" }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+        run: |
+          set -e
+          SUCCESS_MSG="✅ Notion Insert Mock 成功"
+          PAYLOAD=$(jq -n --arg text "$SUCCESS_MSG" '{text: $text}')
+          curl -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$SLACK_WEBHOOK_URL"
 
-      - name: Send Slack notification (failure)
+      - name: Slack通知（失敗時）
         if: failure()
-        uses: slackapi/slack-github-action@v1.24.0
-        with:
-          payload: |
-            { "text": "❌ Notion登録（モック）が失敗しました（依存/Secrets/実行を確認してください）" }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+        run: |
+          set -e
+          FAIL_MSG="❌ Notion Insert Mock 失敗"
+          PAYLOAD=$(jq -n --arg text "$FAIL_MSG" '{text: $text}')
+          curl -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$SLACK_WEBHOOK_URL"
