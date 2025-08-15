@@ -1,147 +1,74 @@
 import os
-import sys
-import json
-import time
-import traceback
-import feedparser
 import requests
-from typing import Optional
+import feedparser
+from deep_translator import DeeplTranslator
 
-try:
-    from deep_translator import DeeplTranslator, GoogleTranslator
-except Exception:
-    DeeplTranslator = None  # type: ignore
-    GoogleTranslator = None  # type: ignore
+# === 環境変数から取得（Repository secrets 経由） ===
+NOTION_API_KEY = os.environ["NOTION_API_KEY"]
+NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
+DEEPL_API_KEY = os.environ["DEEPL_API_KEY"]
+RSS_URL = os.environ["RSS_URL"]
 
 NOTION_API_URL = "https://api.notion.com/v1/pages"
-NOTION_QUERY_URL_FMT = "https://api.notion.com/v1/databases/{db}/query"
-NOTION_VERSION = "2022-06-28"
+NOTION_QUERY_URL = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
 
-# Notion DB のプロパティ名（DB側と一致させる）
-PROP_NAME = "Name"        # title
-PROP_URL = "URL"          # url
-PROP_SUMMARY = "Summary"  # rich_text
+# === 共通ヘッダー ===
+headers = {
+    "Authorization": f"Bearer {NOTION_API_KEY}",
+    "Content-Type": "application/json",
+    "Notion-Version": "2022-06-28"
+}
 
-
-def get_env(name: str, required: bool = False) -> Optional[str]:
-    val = os.environ.get(name)
-    if required and (val is None or val.strip() == ""):
-        raise RuntimeError(f"Required environment variable is missing: {name}")
-    return val
-
-
-def notion_headers(token: str) -> dict:
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Notion-Version": NOTION_VERSION,
-    }
-
-
-def translate_text(text: str, deepl_key: Optional[str]) -> str:
-    if not text:
-        return ""
-    # deep_translator は小文字 or auto 指定
-    if deepl_key and DeeplTranslator is not None:
-        try:
-            return DeeplTranslator(api_key=deepl_key, source="auto", target="ja").translate(text)
-        except Exception:
-            pass
-    if GoogleTranslator is not None:
-        try:
-            return GoogleTranslator(source="auto", target="ja").translate(text)
-        except Exception:
-            pass
-    return text
-
-
-def parse_feed(rss_url: str):
-    feed = feedparser.parse(rss_url)
-    if getattr(feed, "bozo", 0):
-        raise RuntimeError(f"Failed to parse RSS: {getattr(feed, 'bozo_exception', 'unknown error')}")
-    return getattr(feed, "entries", [])
-
-
-def is_url_already_registered(url: str, token: str, db_id: str) -> bool:
-    query_url = NOTION_QUERY_URL_FMT.format(db=db_id)
-    headers = notion_headers(token)
-    payload = {
+def is_url_already_registered(url: str) -> bool:
+    """Notion DB に同じ URL が登録済みか確認"""
+    query = {
         "filter": {
-            "property": PROP_URL,
-            "url": {"equals": url}
+            "property": "URL",
+            "url": {
+                "equals": url
+            }
         }
     }
-    res = requests.post(query_url, headers=headers, json=payload, timeout=30)
-    if res.status_code == 429:
-        time.sleep(2)
-        res = requests.post(query_url, headers=headers, json=payload, timeout=30)
+    res = requests.post(NOTION_QUERY_URL, headers=headers, json=query)
     res.raise_for_status()
     return len(res.json().get("results", [])) > 0
 
+def add_page_to_notion(title: str, url: str, summary: str):
+    """記事を Notion に登録"""
+    if is_url_already_registered(url):
+        print(f"⚠️ 既存URLのためスキップ: {url}")
+        return
 
-def add_page_to_notion(title: str, url: str, summary: str, token: str, db_id: str) -> None:
-    headers = notion_headers(token)
     payload = {
-        "parent": {"database_id": db_id},
+        "parent": {"database_id": NOTION_DATABASE_ID},
         "properties": {
-            PROP_NAME: {"title": [{"text": {"content": title}}]},
-            PROP_URL: {"url": url},
-            PROP_SUMMARY: {"rich_text": [{"text": {"content": summary}}]},
-        },
+            "Name": {"title": [{"text": {"content": title}}]},
+            "URL": {"url": url},
+            "Summary": {"rich_text": [{"text": {"content": summary}}]}
+        }
     }
-    res = requests.post(NOTION_API_URL, headers=headers, json=payload, timeout=30)
-    if res.status_code == 429:
-        time.sleep(2)
-        res = requests.post(NOTION_API_URL, headers=headers, json=payload, timeout=30)
-    if res.status_code >= 400:
-        try:
-            print(f"Notion API error ({res.status_code})")
-            print(res.text)
-        finally:
-            res.raise_for_status()
+    res = requests.post(NOTION_API_URL, headers=headers, json=payload)
+    if res.status_code != 200:
+        print("Notion API error:", res.status_code, res.text)
+    res.raise_for_status()
+    print(f"✅ 登録完了: {title}")
 
+def translate_text(text: str) -> str:
+    """DeepL APIで翻訳（英語→日本語）"""
+    translator = DeeplTranslator(api_key=DEEPL_API_KEY, source="en", target="ja")
+    return translator.translate(text)
 
-def main() -> int:
-    try:
-        token = get_env("NOTION_API_KEY", required=True)
-        db_id = get_env("NOTION_DATABASE_ID", required=True)
-        rss_url = get_env("RSS_URL", required=True)
-        deepl_key = get_env("DEEPL_API_KEY", required=True)
-
-        entries = parse_feed(rss_url)
-        if not entries:
-            print("RSS に記事がありません。処理を終了します。")
-            print(json.dumps({"result": {"processed": 0, "created": 0, "skipped": 0}}, ensure_ascii=False))
-            return 0
-
-        created, skipped = 0, 0
-        for e in entries:
-            title = getattr(e, "title", "").strip()
-            url = getattr(e, "link", "").strip()
-            summary_raw = getattr(e, "summary", "") or getattr(e, "description", "")
-            if not title or not url:
-                print(f"skip (title/url missing): title='{title}', url='{url}'")
-                skipped += 1
-                continue
-
-            if is_url_already_registered(url, token, db_id):
-                print(f"⚠️ 既存URLのためスキップ: {url}")
-                skipped += 1
-                continue
-
-            summary_ja = translate_text(summary_raw, deepl_key)
-            add_page_to_notion(title, url, summary_ja, token, db_id)
-            print(f"✅ 登録完了: {title}")
-            created += 1
-
-        print(json.dumps({"result": {"processed": len(entries), "created": created, "skipped": skipped}}, ensure_ascii=False))
-        return 0
-    except Exception as e:
-        print("=== PRODUCTION execution failed ===")
-        print(str(e))
-        traceback.print_exc()
-        return 1
-
+def fetch_and_register_articles():
+    """RSSから記事を取得してNotionに登録"""
+    feed = feedparser.parse(RSS_URL)
+    for entry in feed.entries:
+        title = entry.title
+        url = entry.link
+        summary_raw = getattr(entry, "summary", "")
+        summary_ja = translate_text(summary_raw) if summary_raw else ""
+        add_page_to_notion(title, url, summary_ja)
 
 if __name__ == "__main__":
-    sys.exit(main())
+    print("=== 本番 Notion 登録開始 ===")
+    fetch_and_register_articles()
+    print("=== 本番 Notion 登録完了 ===")
