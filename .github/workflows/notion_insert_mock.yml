@@ -13,27 +13,39 @@ jobs:
       - name: Install required Python packages
         run: |
           set -e
-          pip install feedparser deep-translator requests python-dotenv notion-client beautifulsoup4
+          pip install -r requirements.txt
 
       - name: Run mock Notion insert
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          RSS_URL: ${{ secrets.RSS_URL }}
         run: |
           set -e
           echo "モックのNotion登録を実行中..."
           python scripts/notion_mock.py
           echo "Notion登録（モック）が成功しました"
 
-      - name: Send Slack notification
+      - name: Send Slack notification (success)
+        if: success()
         uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
             {
-              "text": "Notion登録（モック）が成功しました",
-              "attachments": [
-                {
-                  "color": "good",
-                  "text": "Notion登録（モック）が成功しました"
-                }
-              ]
+              "text": "✅ Notion登録（モック）が成功しました"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Send Slack notification (failure)
+        if: failure()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "❌ Notion登録（モック）が失敗しました"
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
