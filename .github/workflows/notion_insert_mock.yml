@@ -39,7 +39,7 @@ jobs:
           fi
           set -e
 
-      - name: Prepare Slack Payload
+      - name: Prepare Slack Payload JSON file
         id: prepare_slack
         shell: bash
         env:
@@ -48,11 +48,11 @@ jobs:
         run: |
           jq -n \
             --arg status "$STATUS" \
-            --arg error_raw "$ERROR_JSON" '
+            --argjson error_msg $ERROR_JSON '
               ($status == "success" ? "good" : "danger") as $color
               | ( if $status == "success"
                   then "Notion登録（モック）が成功しました"
-                  else ("Notion登録（モック）が失敗しました\n\nエラー内容:\n```" + ($error_raw | fromjson) + "```")
+                  else ("Notion登録（モック）が失敗しました\n\nエラー内容:\n```" + $error_msg + "```")
                 end ) as $message
               | {
                   text: ("モックワークフロー実行結果: " + $status),
@@ -67,7 +67,8 @@ jobs:
 
       - name: Send Slack Notification
         if: always()
-        run: |
-          cat slack_payload.json | slackapi/slack-github-action@v1.24.0
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload-file-path: slack_payload.json
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
