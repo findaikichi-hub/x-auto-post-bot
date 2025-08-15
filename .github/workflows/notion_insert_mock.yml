@@ -4,65 +4,72 @@ on:
   workflow_dispatch:
 
 jobs:
-  notion_insert:
+  notion-insert-mock:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install requests
 
-      - name: Run Notion Insert Script (Mock)
+      - name: Run mock Notion insert
         id: run_script
         run: |
           set +e
-          python scripts/notion_insert.py > script_output.log 2>&1
-          exit_code=$?
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
-          if [ $exit_code -ne 0 ]; then
-            echo "status=failed" >> $GITHUB_OUTPUT
-            # Slack用にエラー内容をBase64エンコード
-            error_msg=$(base64 -w0 script_output.log)
-            echo "error_message=$error_msg" >> $GITHUB_OUTPUT
-          else
-            echo "status=success" >> $GITHUB_OUTPUT
-            echo "error_message=" >> $GITHUB_OUTPUT
-          fi
+          python <<'PYCODE'
+          import json
+          import sys
+
+          # モック用ダミー実行
+          try:
+              # 実際にはここでNotion API呼び出し
+              result = {"status": "success", "error_message": ""}
+          except Exception as e:
+              result = {"status": "failure", "error_message": str(e)}
+
+          with open("result.json", "w") as f:
+              json.dump(result, f)
+          PYCODE
           set -e
 
-      - name: Create Slack Payload JSON
-        id: create_payload
+      - name: Read result
+        id: read_result
         run: |
-          status="${{ steps.run_script.outputs.status }}"
-          error_message="${{ steps.run_script.outputs.error_message }}"
+          status=$(jq -r '.status' result.json)
+          error_message=$(jq -r '.error_message' result.json)
+          echo "status=${status}" >> $GITHUB_OUTPUT
+          echo "error_message=${error_message}" >> $GITHUB_OUTPUT
 
-          if [ "$status" = "success" ]; then
-            color="good"
-            message="Notion登録（モック）が成功しました"
+      - name: Prepare Slack payload
+        run: |
+          STATUS="${{ steps.read_result.outputs.status }}"
+          ERROR_MSG="${{ steps.read_result.outputs.error_message }}"
+
+          if [ "$STATUS" = "success" ]; then
+            MESSAGE="Notion登録（モック）が成功しました"
+            COLOR="good"
           else
-            color="danger"
-            decoded_error=$(echo "$error_message" | base64 -d)
-            message="Notion登録（モック）が失敗しました\n\nエラー内容:\n\`\`\`$decoded_error\`\`\`"
+            MESSAGE="Notion登録（モック）が失敗しました\n\nエラー内容:\n\`\`\`${ERROR_MSG}\`\`\`"
+            COLOR="danger"
           fi
 
           jq -n \
-            --arg text "モックワークフロー実行結果: $status" \
-            --arg color "$color" \
-            --arg msg "$message" \
-            '{text: $text, attachments: [{color: $color, text: $msg}]}' \
-            > slack_payload.json
+            --arg text "$MESSAGE" \
+            --arg color "$COLOR" \
+            '{attachments: [{color: $color, text: $text}]}' > slack_payload.json
 
-      - name: Send Slack Notification
-        if: always()
+      - name: Send to Slack
         uses: slackapi/slack-github-action@v1.24.0
         with:
-          payload-file-path: ./slack_payload.json
+          payload-file-path: slack_payload.json
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
