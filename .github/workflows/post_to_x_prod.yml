@@ -1,28 +1,25 @@
-name: Post to X Prod
+name: Post to X (Production)
 
 on:
   workflow_dispatch:
-  schedule:
-    # 毎時02分
-    - cron: "2 * * * *"
 
 concurrency:
-  group: post-to-x-prod
+  group: post-to-x
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  post_to_x_prod:
+  post_to_x:
     runs-on: ubuntu-latest
     env:
       RUN_START_MSG: "=== 本番投稿実行開始 ==="
       RUN_DOING_MSG: "本番投稿処理中..."
-      RUN_SUCCESS_MSG: "✅ 本番投稿が成功しました"
+      RUN_SUCCESS_MSG: "本番投稿が成功しました"
       RUN_END_MSG: "=== 本番投稿実行終了 ==="
-      SLACK_SUCCESS_TEXT: "✅ X投稿（本番）が成功しました"
-      SLACK_FAILURE_TEXT: "❌ X投稿（本番）が失敗しました（依存/Secrets/実行を確認してください）"
+      SLACK_SUCCESS_TEXT: "✅ 本番投稿が成功しました"
+      SLACK_FAILURE_TEXT: "❌ 本番投稿が失敗しました（依存/Secrets/実行を確認してください）"
 
     steps:
       - name: Checkout repository
@@ -38,49 +35,38 @@ jobs:
         run: |
           set -e
           python -m pip install --upgrade pip
-          if [ ! -f requirements.txt ]; then
-            echo "❌ requirements.txt が見つかりません。依存関係を定義してください。" >&2
-            exit 1
-          fi
-          python -m pip install -r requirements.txt
+          pip install -r requirements.txt
 
       - name: Verify required Python modules
         run: |
           set -e
           python - <<'PY'
           import sys, pkgutil
-          required = ["feedparser","deep_translator","requests","bs4","tweepy"]
+          required = ["requests", "feedparser", "deep_translator", "bs4", "tweepy"]
           missing = [m for m in required if pkgutil.find_loader(m) is None]
           if missing:
               print("Missing modules:", ", ".join(missing), file=sys.stderr)
               sys.exit(1)
           PY
-          echo "✅ All required Python modules are installed."
 
-      - name: Validate required secrets for PROD
+      - name: Validate required secrets for Production
         env:
+          _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          _SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           _X_API_KEY: ${{ secrets.X_API_KEY }}
           _X_API_SECRET: ${{ secrets.X_API_SECRET }}
           _X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           _X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
-          _SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           set -e
-          for s in _X_API_KEY _X_API_SECRET _X_ACCESS_TOKEN _X_ACCESS_SECRET _SLACK_WEBHOOK_URL; do
+          for s in _NOTION_API_KEY _NOTION_DATABASE_ID _SLACK_WEBHOOK_URL _X_API_KEY _X_API_SECRET _X_ACCESS_TOKEN _X_ACCESS_SECRET; do
             if [ -z "${!s}" ]; then
               echo "❌ Required secret is missing: ${s#_}" >&2
               exit 1
             fi
           done
-          echo "✅ All required secrets for PROD are present."
-
-      - name: Backup repository to local-like storage
-        run: |
-          set -e
-          BACKUP_DIR="local_backups/$(date +'%Y%m%d_%H%M%S')"
-          mkdir -p "$BACKUP_DIR"
-          rsync -av --exclude "local_backups" ./ "$BACKUP_DIR"/
-          echo "✅ Backup completed at $BACKUP_DIR"
+          echo "✅ All required secrets for Production are present."
 
       - name: Python syntax check (preflight)
         run: |
@@ -88,15 +74,15 @@ jobs:
           python -m py_compile scripts/post_to_x.py
           echo "✅ Syntax OK"
 
-      - name: Run production X post
+      - name: Run post to X
         env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           X_API_KEY: ${{ secrets.X_API_KEY }}
           X_API_SECRET: ${{ secrets.X_API_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
           set -e
           echo "$RUN_START_MSG"
