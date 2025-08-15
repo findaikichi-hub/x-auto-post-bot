@@ -54,10 +54,11 @@ jobs:
           rsync -av --exclude "local_backups" ./ "$BACKUP_DIR"/
           echo "✅ Backup completed at $BACKUP_DIR"
 
-      - name: Python syntax check
+      - name: Python syntax check for notion_insert.py
         run: |
           set -e
           python -m py_compile scripts/notion_insert.py
+          echo "✅ Python syntax check passed for notion_insert.py"
 
       - name: Run production Notion insert
         env:
