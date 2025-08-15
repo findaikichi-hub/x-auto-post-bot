@@ -2,6 +2,7 @@ import os
 import requests
 import feedparser
 from deep_translator import DeeplTranslator
+import tweepy
 
 # ===== 設定（Secrets をそのまま参照。任意は .get()）=====
 NOTION_API_KEY = os.environ["NOTION_API_KEY"]
@@ -9,6 +10,12 @@ NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 RSS_URL = os.environ["RSS_URL"]
 SLACK_WEBHOOK_URL = os.environ["SLACK_WEBHOOK_URL"]
 DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY", "")  # 任意
+
+# X（Twitter）APIキー群
+X_API_KEY = os.environ["X_API_KEY"]
+X_API_SECRET = os.environ["X_API_SECRET"]
+X_ACCESS_TOKEN = os.environ["X_ACCESS_TOKEN"]
+X_ACCESS_SECRET = os.environ["X_ACCESS_SECRET"]
 
 # deep_translator の仕様に合わせ言語コードは小文字固定
 SRC_LANG = "en"
@@ -96,6 +103,25 @@ def notify_slack(message):
     res.raise_for_status()
 
 
+def post_to_x(article):
+    """X（Twitter）に記事を投稿"""
+    auth = tweepy.OAuth1UserHandler(
+        X_API_KEY,
+        X_API_SECRET,
+        X_ACCESS_TOKEN,
+        X_ACCESS_SECRET
+    )
+    api = tweepy.API(auth)
+
+    # 投稿文（140文字以内に調整）
+    text = f"{article['title']} {article['url']}"
+    if len(text) > 140:
+        allowed_title_len = 140 - len(article["url"]) - 1
+        text = f"{article['title'][:allowed_title_len]}… {article['url']}"
+
+    api.update_status(text)
+
+
 def main():
     try:
         # RSS取得
@@ -107,7 +133,6 @@ def main():
             summary_raw = getattr(entry, "summary", "") if hasattr(entry, "summary") else ""
 
             if not title_raw or not link:
-                # タイトル or URL 無しはスキップ（ログはSlackに載せない）
                 continue
 
             translated_title = translate_text(title_raw)
@@ -125,15 +150,19 @@ def main():
         existing_urls = get_existing_urls()
         new_articles = filter_new_articles(articles, existing_urls)
 
-        # 登録処理
+        # 登録 & 投稿
+        post_count = 0
         for article in new_articles:
             add_to_notion(article)
+            post_to_x(article)
+            post_count += 1
 
         # Slack通知
-        notify_slack(f"新規登録: {len(new_articles)}件 / 取得: {len(articles)}件 / 重複スキップ: {len(articles) - len(new_articles)}件")
+        notify_slack(
+            f"新規登録: {len(new_articles)}件（X投稿: {post_count}件） / 取得: {len(articles)}件 / 重複: {len(articles) - len(new_articles)}件"
+        )
 
     except Exception as e:
-        # 失敗通知してリスロー（Actions failure に反映）
         try:
             notify_slack(f"エラー発生: {str(e)}")
         finally:
