@@ -1,0 +1,101 @@
+name: Post to X Mock
+
+on:
+  workflow_dispatch:
+
+# 同時実行の衝突を防止
+concurrency:
+  group: post-to-x-mock
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  post_to_x_mock:
+    runs-on: ubuntu-latest
+    env:
+      RUN_START_MSG: "=== MOCK投稿実行開始 ==="
+      RUN_DOING_MSG: "MOCK投稿処理中..."
+      RUN_SUCCESS_MSG: "MOCK投稿が成功しました"
+      RUN_END_MSG: "=== MOCK投稿実行終了 ==="
+      SLACK_SUCCESS_TEXT: "✅ MOCK投稿が成功しました"
+      SLACK_FAILURE_TEXT: "❌ MOCK投稿が失敗しました（依存/Secrets/実行を確認してください）"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install & verify Python dependencies
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+          python -m pip install requests
+          python - <<'PY'
+          import sys, pkgutil
+          required = ["requests"]
+          missing = [m for m in required if pkgutil.find_loader(m) is None]
+          if missing:
+              print("Missing modules:", ", ".join(missing), file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Validate required secrets for MOCK
+        env:
+          _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          _SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -e
+          for s in _NOTION_API_KEY _NOTION_DATABASE_ID _SLACK_WEBHOOK_URL; do
+            if [ -z "${!s}" ]; then
+              echo "❌ Required secret is missing: ${s#_}" >&2
+              exit 1
+            fi
+          done
+          echo "✅ All required secrets for MOCK are present."
+
+      - name: Python syntax check (preflight)
+        run: |
+          set -e
+          python -m py_compile scripts/post_to_x_mock.py
+          echo "✅ Syntax OK"
+
+      - name: Run mock post to X
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -e
+          echo "$RUN_START_MSG"
+          echo "$RUN_DOING_MSG"
+          python scripts/post_to_x_mock.py
+          echo "$RUN_SUCCESS_MSG"
+          echo "$RUN_END_MSG"
+
+      - name: Send Slack notification (success)
+        if: success()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            { "text": "${{ env.SLACK_SUCCESS_TEXT }}" }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Send Slack notification (failure)
+        if: failure()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            { "text": "${{ env.SLACK_FAILURE_TEXT }}" }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
