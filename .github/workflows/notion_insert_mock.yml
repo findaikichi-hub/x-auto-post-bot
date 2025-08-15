@@ -20,7 +20,7 @@ jobs:
         run: |
           set -e
           python -m pip install --upgrade pip
-          # 必須パッケージ（deep-translator を含む）
+          # 必須パッケージ（deep-translator / bs4 など）
           python -m pip install feedparser deep-translator requests beautifulsoup4
           # 依存の存在を検証（無ければ即fail）
           python - <<'PY'
