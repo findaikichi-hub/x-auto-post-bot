@@ -39,7 +39,7 @@ jobs:
           set -e
           python -m pip install --upgrade pip
           if [ ! -f requirements.txt ]; then
-            echo "❌ requirements.txt が見つかりません"
+            echo "❌ requirements.txt が見つかりません。依存関係を定義してください。" >&2
             exit 1
           fi
           python -m pip install -r requirements.txt
@@ -95,6 +95,8 @@ jobs:
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
           set -e
           echo "$RUN_START_MSG"
