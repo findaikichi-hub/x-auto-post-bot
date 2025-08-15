@@ -34,11 +34,11 @@ jobs:
         env:
           _RSS_URL: ${{ secrets.RSS_URL }}
           _DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
-          _NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
           set -e
-          for secret in _RSS_URL _NOTION_TOKEN _NOTION_DATABASE_ID; do
+          for secret in _RSS_URL _NOTION_API_KEY _NOTION_DATABASE_ID; do
             if [ -z "${!secret}" ]; then
               echo "❌ Required secret is missing: $secret" >&2
               exit 1
@@ -58,7 +58,7 @@ jobs:
         env:
           RSS_URL: ${{ secrets.RSS_URL }}
           DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
           set -e
