@@ -1,144 +1,101 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import os
 import feedparser
 import requests
+from scripts.notion_mock import fetch_existing_urls_mock, insert_to_notion_mock
 
-# === 実行モード設定 ===
+# ==== 環境変数 ====
 USE_MOCK = os.getenv("USE_MOCK", "false").lower() == "true"
-
-# === 環境変数（必ずRepository secretsから取得） ===
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 DEEPL_API_KEY = os.getenv("DEEPL_API_KEY")
 RSS_URL = os.getenv("RSS_URL")
 
-# 明示指定（任意）
-NOTION_PROP_TITLE = os.getenv("NOTION_PROP_TITLE")
-NOTION_PROP_URL = os.getenv("NOTION_PROP_URL")
-NOTION_PROP_STATUS = os.getenv("NOTION_PROP_STATUS")
-NOTION_STATUS_DEFAULT = os.getenv("NOTION_STATUS_DEFAULT", "draft")
+if not USE_MOCK:
+    if not all([NOTION_API_KEY, NOTION_DATABASE_ID, DEEPL_API_KEY, RSS_URL]):
+        raise ValueError("Missing required environment variables for production mode.")
 
-# === 事前チェック ===
-if not NOTION_API_KEY or not NOTION_DATABASE_ID:
-    raise ValueError("NOTION_API_KEY または NOTION_DATABASE_ID が設定されていません。")
-if not DEEPL_API_KEY:
-    raise ValueError("DEEPL_API_KEY is not set.")
-if not RSS_URL:
-    raise ValueError("RSS_URL is not set.")
-
-NOTION_VERSION = "2022-06-28"
-NOTION_API_BASE = "https://api.notion.com/v1"
-
+# ==== 翻訳処理 ====
 def translate_text(text, target_lang="JA"):
-    """DeepL翻訳"""
+    if USE_MOCK:
+        return f"[MOCK_TRANSLATION] {text}"
     url = "https://api-free.deepl.com/v2/translate"
     data = {"auth_key": DEEPL_API_KEY, "text": text, "target_lang": target_lang}
     response = requests.post(url, data=data)
     response.raise_for_status()
     return response.json()["translations"][0]["text"]
 
-def discover_properties():
-    """Notion DBプロパティ自動検出"""
-    headers = {
-        "Authorization": f"Bearer {NOTION_API_KEY}",
-        "Notion-Version": NOTION_VERSION,
-    }
-    res = requests.get(f"{NOTION_API_BASE}/databases/{NOTION_DATABASE_ID}", headers=headers)
-    res.raise_for_status()
-    props = res.json().get("properties", {})
-
-    def ensure_prop_exists(name, expected_type=None):
-        if not name:
-            return None
-        p = props.get(name)
-        if not p:
-            return None
-        if expected_type and p.get("type") != expected_type:
-            return None
-        return name
-
-    title_key = ensure_prop_exists(NOTION_PROP_TITLE, "title") or next((k for k, v in props.items() if v.get("type") == "title"), None)
-    url_key = ensure_prop_exists(NOTION_PROP_URL, "url") or next((k for k, v in props.items() if v.get("type") == "url"), None)
-    status_key = ensure_prop_exists(NOTION_PROP_STATUS, "select") or next((k for k, v in props.items() if v.get("type") == "select"), None)
-    status_options = [opt.get("name") for opt in props[status_key]["select"].get("options", [])] if status_key else []
-
-    print("[INFO] Detected properties:", title_key, url_key, status_key, status_options)
-    return {"title": title_key, "url": url_key, "status": status_key, "status_options": status_options}
-
-def add_to_notion(title, url, summary, prop_map):
-    """Notionに追加"""
+# ==== Notion既存URL取得 ====
+def fetch_existing_urls():
+    if USE_MOCK:
+        return fetch_existing_urls_mock()
+    notion_url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
         "Content-Type": "application/json",
-        "Notion-Version": NOTION_VERSION,
+        "Notion-Version": "2022-06-28",
     }
+    has_more = True
+    next_cursor = None
+    urls = set()
 
-    properties = {}
-    if not prop_map["title"]:
-        raise RuntimeError("title型プロパティが見つかりません。")
-    properties[prop_map["title"]] = {"title": [{"text": {"content": title}}]}
-    if prop_map["url"]:
-        properties[prop_map["url"]] = {"url": url}
-    if prop_map["status"]:
-        status_name = NOTION_STATUS_DEFAULT if NOTION_STATUS_DEFAULT in prop_map["status_options"] else (prop_map["status_options"][0] if prop_map["status_options"] else None)
-        if status_name:
-            properties[prop_map["status"]] = {"select": {"name": status_name}}
+    while has_more:
+        payload = {}
+        if next_cursor:
+            payload["start_cursor"] = next_cursor
+        response = requests.post(notion_url, headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        for r in data.get("results", []):
+            url_prop = r["properties"].get("URL", {}).get("url")
+            if url_prop:
+                urls.add(url_prop)
+        has_more = data.get("has_more", False)
+        next_cursor = data.get("next_cursor")
 
+    return urls
+
+# ==== Notion登録 ====
+def add_to_notion(title, url, summary):
+    if USE_MOCK:
+        return insert_to_notion_mock(title, url)
+    notion_url = "https://api.notion.com/v1/pages"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28",
+    }
     data = {
         "parent": {"database_id": NOTION_DATABASE_ID},
-        "properties": properties,
+        "properties": {
+            "Title": {"title": [{"text": {"content": title}}]},
+            "URL": {"url": url},
+            "Status": {"select": {"name": "draft"}},
+        },
         "children": [
             {
                 "object": "block",
                 "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [
-                        {"text": {"content": summary or ""}},
-                        {"text": {"content": "\n\nSource: " + (url or "")}},
-                    ]
-                },
+                "paragraph": {"rich_text": [{"text": {"content": summary}}]},
             }
         ],
     }
-
-    if USE_MOCK:
-        print(f"[MOCK] Would add to Notion: {title} ({url})")
-        return
-
-    resp = requests.post(f"{NOTION_API_BASE}/pages", headers=headers, json=data)
-    if resp.status_code != 200:
-        print("Error from Notion:", resp.text)
-    resp.raise_for_status()
+    response = requests.post(notion_url, headers=headers, json=data)
+    response.raise_for_status()
     print(f"✅ Added to Notion: {title}")
 
-def safe_get_summary(entry):
-    if hasattr(entry, "summary"):
-        return entry.summary
-    if hasattr(entry, "description"):
-        return entry.description
-    if hasattr(entry, "content") and entry.content:
-        try:
-            return entry.content[0].value
-        except Exception:
-            pass
-    return ""
-
+# ==== メイン処理 ====
 def main():
-    prop_map = discover_properties()
+    existing_urls = fetch_existing_urls()
+    print(f"[INFO] Found {len(existing_urls)} existing URLs in Notion")
+
     feed = feedparser.parse(RSS_URL)
-    entries = getattr(feed, "entries", []) or []
-    if not entries:
-        print("[WARN] No RSS entries found.")
-        return
-    for entry in entries[:5]:
-        title_raw = getattr(entry, "title", "(no title)")
-        link_raw = getattr(entry, "link", "")
-        summary_raw = safe_get_summary(entry)
-        title_ja = translate_text(title_raw)
-        summary_ja = translate_text(summary_raw) if summary_raw else ""
-        add_to_notion(title_ja, link_raw, summary_ja, prop_map)
+    for entry in feed.entries[:5]:
+        if entry.link in existing_urls:
+            print(f"⏩ Skipping duplicate: {entry.link}")
+            continue
+        title_translated = translate_text(entry.title)
+        summary_translated = translate_text(entry.summary)
+        add_to_notion(title_translated, entry.link, summary_translated)
 
 if __name__ == "__main__":
     main()
