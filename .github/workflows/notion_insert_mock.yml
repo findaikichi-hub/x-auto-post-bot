@@ -18,35 +18,64 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+          # 念のため jq を確実に用意（多くのランナーには入っていますが保険で）
+          sudo apt-get update && sudo apt-get install -y jq
 
       - name: Run Notion Insert Script (Mock)
         id: run_script
+        shell: bash
         run: |
-          set -e
-          python scripts/notion_insert.py || echo "failed" > result_status.txt
+          set +e
+          python scripts/notion_insert.py > script_output.log 2>&1
+          exit_code=$?
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
-      - name: Determine result status
-        id: check_status
-        run: |
-          if [ -f result_status.txt ]; then
-            echo "status=failed" >> $GITHUB_OUTPUT
+          if [ $exit_code -ne 0 ]; then
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            # ログ全文をJSON安全な文字列に（"..." の形：ダブルクオートや改行を全エスケープ）
+            error_json=$(jq -Rs '.' < script_output.log)
+            echo "error_json=$error_json" >> "$GITHUB_OUTPUT"
           else
-            echo "status=success" >> $GITHUB_OUTPUT
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            echo 'error_json=""' >> "$GITHUB_OUTPUT"
           fi
+          set -e
+
+      - name: Prepare Slack Payload (safe JSON)
+        id: prepare_slack
+        shell: bash
+        env:
+          STATUS: ${{ steps.run_script.outputs.status }}
+          ERROR_JSON: ${{ steps.run_script.outputs.error_json }}
+        run: |
+          # STATUS は "success" または "failed"
+          # ERROR_JSON は "ログ全文" を表す JSON 文字列（例: "line1\nline2"）
+          # ここでSlackに渡す最終JSONを jq だけで生成（式展開は使わない）
+          jq -n \
+            --arg status "$STATUS" \
+            --arg error_raw "$ERROR_JSON" '
+              ($status == "success" ? "good" : "danger") as $color
+              | ( if $status == "success"
+                  then "Notion登録（モック）が成功しました"
+                  else ("Notion登録（モック）が失敗しました\n\nエラー内容:\n```" + ($error_raw | fromjson) + "```")
+                end ) as $message
+              | {
+                  text: ("モックワークフロー実行結果: " + $status),
+                  attachments: [
+                    {
+                      color: $color,
+                      text: $message
+                    }
+                  ]
+                }
+            ' > slack_payload.json
+
+          # 上記JSONを step の output（複数行）として渡す
+          {
+            echo 'payload<<EOF'
+            cat slack_payload.json
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Send Slack Notification
         if: always()
-        uses: slackapi/slack-github-action@v1.24.0
-        with:
-          payload: |
-            {
-              "text": "モックワークフロー実行結果: ${{ steps.check_status.outputs.status }}",
-              "attachments": [
-                {
-                  "color": "${{ steps.check_status.outputs.status == 'success' && 'good' || 'danger' }}",
-                  "text": "Notion登録（モック）が ${{ steps.check_status.outputs.status }} しました"
-                }
-              ]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
