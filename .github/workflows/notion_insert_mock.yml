@@ -22,20 +22,17 @@ jobs:
       - name: Run Notion Insert Script (Mock)
         id: run_script
         run: |
-          set +e
-          python scripts/notion_insert.py > script_output.log 2>&1
-          exit_code=$?
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
-          if [ $exit_code -ne 0 ]; then
+          set -e
+          python scripts/notion_insert.py || echo "failed" > result_status.txt
+
+      - name: Determine result status
+        id: check_status
+        run: |
+          if [ -f result_status.txt ]; then
             echo "status=failed" >> $GITHUB_OUTPUT
-            # Slack用にエラー内容をJSON安全な文字列に変換（コードブロック形式）
-            error_json=$(cat script_output.log | jq -Rs '.')
-            echo "error_message=${error_json}" >> $GITHUB_OUTPUT
           else
             echo "status=success" >> $GITHUB_OUTPUT
-            echo "error_message=\"\"" >> $GITHUB_OUTPUT
           fi
-          set -e
 
       - name: Send Slack Notification
         if: always()
@@ -43,14 +40,11 @@ jobs:
         with:
           payload: |
             {
-              "text": "モックワークフロー実行結果: ${{ steps.run_script.outputs.status }}",
+              "text": "モックワークフロー実行結果: ${{ steps.check_status.outputs.status }}",
               "attachments": [
                 {
-                  "color": "${{ steps.run_script.outputs.status == 'success' && 'good' || 'danger' }}",
-                  "text": ${{ steps.run_script.outputs.status == 'success'
-                    && toJSON('Notion登録（モック）が成功しました')
-                    || toJSON(format("Notion登録（モック）が失敗しました\n\nエラー内容:\n```{0}```", steps.run_script.outputs.error_message | fromJSON))
-                  }}
+                  "color": "${{ steps.check_status.outputs.status == 'success' && 'good' || 'danger' }}",
+                  "text": "Notion登録（モック）が ${{ steps.check_status.outputs.status }} しました"
                 }
               ]
             }
