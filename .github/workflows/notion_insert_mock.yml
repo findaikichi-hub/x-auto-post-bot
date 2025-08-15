@@ -10,10 +10,43 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install required Python packages
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install & verify Python dependencies
         run: |
           set -e
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          # 依存を直接インストール（名前の揺れ対策：インポート名 deep_translator / パッケージ名 deep-translator）
+          python -m pip install feedparser deep-translator requests python-dotenv notion-client beautifulsoup4
+          # インポート検証（ここで落ちたらすぐ分かる）
+          python - <<'PY'
+          import sys, pkgutil
+          required = ["feedparser","deep_translator","requests","notion_client","bs4"]
+          missing = [m for m in required if pkgutil.find_loader(m) is None]
+          if missing:
+              print("Missing modules:", ", ".join(missing), file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Validate required secrets
+        env:
+          _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          _DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          _RSS_URL: ${{ secrets.RSS_URL }}
+        run: |
+          set -e
+          for v in _NOTION_API_KEY _NOTION_DATABASE_ID _DEEPL_API_KEY _RSS_URL; do
+            if [ -z "${!v}" ]; then
+              echo "❌ Required secret is missing: $v" >&2
+              exit 1
+            fi
+          done
+          echo "✅ All required secrets exist."
 
       - name: Run mock Notion insert
         env:
@@ -32,9 +65,7 @@ jobs:
         uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
-            {
-              "text": "✅ Notion登録（モック）が成功しました"
-            }
+            { "text": "✅ Notion登録（モック）が成功しました" }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
@@ -44,9 +75,7 @@ jobs:
         uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
-            {
-              "text": "❌ Notion登録（モック）が失敗しました"
-            }
+            { "text": "❌ Notion登録（モック）が失敗しました（依存/Secrets/実行を確認してください）" }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
