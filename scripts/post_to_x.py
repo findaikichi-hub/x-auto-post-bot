@@ -1,57 +1,94 @@
-name: Post to X (Production)
+import os
+import requests
+import tweepy
 
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 * * * *" # 毎時0分に実行
+# ===== 設定 =====
+NOTION_API_KEY = os.environ["NOTION_API_KEY"]
+NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
+SLACK_WEBHOOK_URL = os.environ["SLACK_WEBHOOK_URL"]
 
-jobs:
-  post_to_x:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+X_API_KEY = os.environ["X_API_KEY"]
+X_API_SECRET = os.environ["X_API_SECRET"]
+X_ACCESS_TOKEN = os.environ["X_ACCESS_TOKEN"]
+X_ACCESS_SECRET = os.environ["X_ACCESS_SECRET"]
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+NOTION_VERSION = "2022-06-28"
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
 
-      - name: Verify X API credentials
-        run: |
-          set +e
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
-            --url "https://api.twitter.com/1.1/account/verify_credentials.json" \
-            --header "Authorization: OAuth oauth_consumer_key=${{ secrets.X_API_KEY }},oauth_token=${{ secrets.X_ACCESS_TOKEN }},oauth_signature_method=HMAC-SHA1,oauth_timestamp=$(date +%s),oauth_nonce=$(uuidgen),oauth_version=1.0,oauth_signature=TEST")
-          if [ "$RESPONSE" != "200" ]; then
-            echo "X API credentials verification failed. HTTP status: $RESPONSE"
-            exit 1
-          fi
+def get_approved_articles():
+    """Notion DBからSelect='approved'の記事を取得"""
+    url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Content-Type": "application/json",
+        "Notion-Version": NOTION_VERSION,
+    }
+    payload = {
+        "filter": {
+            "property": "Select",
+            "select": {"equals": "approved"},
+        }
+    }
 
-      - name: Run post_to_x.py
-        env:
-          X_API_KEY: ${{ secrets.X_API_KEY }}
-          X_API_SECRET: ${{ secrets.X_API_SECRET }}
-          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: |
-          python scripts/post_to_x.py
+    res = requests.post(url, headers=headers, json=payload, timeout=30)
+    res.raise_for_status()
+    data = res.json()
 
-      - name: Notify Slack (Success)
-        if: success()
-        run: |
-          curl -X POST -H 'Content-type: application/json' \
-            --data '{"text":"✅ X投稿（本番）ワークフローが正常に完了しました。"}' \
-            ${{ secrets.SLACK_WEBHOOK_URL }}
+    articles = []
+    for page in data.get("results", []):
+        props = page.get("properties", {})
+        title = props.get("Title", {}).get("title", [{}])[0].get("plain_text", "")
+        url_prop = props.get("URL", {}).get("url", "")
+        if title and url_prop:
+            articles.append({"title": title, "url": url_prop})
 
-      - name: Notify Slack (Failure)
-        if: failure()
-        run: |
-          curl -X POST -H 'Content-type: application/json' \
-            --data '{"text":"❌ X投稿（本番）ワークフローが失敗しました。"}' \
-            ${{ secrets.SLACK_WEBHOOK_URL }}
+    return articles
+
+
+def notify_slack(message):
+    """Slackに通知"""
+    payload = {"text": message}
+    res = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=15)
+    res.raise_for_status()
+
+
+def post_to_x(text):
+    """X(Twitter)に投稿"""
+    auth = tweepy.OAuth1UserHandler(
+        X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_SECRET
+    )
+    api = tweepy.API(auth)
+    api.update_status(status=text)
+
+
+def verify_x_credentials():
+    """Xの認証情報を事前確認"""
+    auth = tweepy.OAuth1UserHandler(
+        X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_SECRET
+    )
+    api = tweepy.API(auth)
+    api.verify_credentials()
+
+
+def main():
+    try:
+        # 認証チェック
+        verify_x_credentials()
+
+        articles = get_approved_articles()
+        if not articles:
+            notify_slack("ℹ️ 投稿対象（approved）はありません。")
+            return
+
+        for art in articles:
+            text = f"{art['title']} {art['url']}"
+            post_to_x(text)
+
+        notify_slack(f"✅ 本番投稿完了: {len(articles)}件")
+    except Exception as e:
+        notify_slack(f"❌ エラー発生: {str(e)}")
+        raise
+
+
+if __name__ == "__main__":
+    main()
