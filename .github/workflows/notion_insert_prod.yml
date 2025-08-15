@@ -54,6 +54,11 @@ jobs:
           rsync -av --exclude "local_backups" ./ "$BACKUP_DIR"/
           echo "✅ Backup completed at $BACKUP_DIR"
 
+      - name: Python syntax check
+        run: |
+          set -e
+          python -m py_compile scripts/notion_insert.py
+
       - name: Run production Notion insert
         env:
           RSS_URL: ${{ secrets.RSS_URL }}
