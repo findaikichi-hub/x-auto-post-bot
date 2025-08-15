@@ -20,40 +20,32 @@ jobs:
         run: |
           set -e
           python -m pip install --upgrade pip
-          # 依存を直接インストール（名前の揺れ対策：インポート名 deep_translator / パッケージ名 deep-translator）
-          python -m pip install feedparser deep-translator requests python-dotenv notion-client beautifulsoup4
-          # インポート検証（ここで落ちたらすぐ分かる）
+          python -m pip install feedparser deep-translator requests beautifulsoup4
           python - <<'PY'
           import sys, pkgutil
-          required = ["feedparser","deep_translator","requests","notion_client","bs4"]
+          required = ["feedparser","deep_translator","requests","bs4"]
           missing = [m for m in required if pkgutil.find_loader(m) is None]
           if missing:
               print("Missing modules:", ", ".join(missing), file=sys.stderr)
               sys.exit(1)
           PY
 
-      - name: Validate required secrets
+      - name: Validate required secrets for MOCK
         env:
-          _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          _DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
           _RSS_URL: ${{ secrets.RSS_URL }}
+          _DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }} # 任意
         run: |
           set -e
-          for v in _NOTION_API_KEY _NOTION_DATABASE_ID _DEEPL_API_KEY _RSS_URL; do
-            if [ -z "${!v}" ]; then
-              echo "❌ Required secret is missing: $v" >&2
-              exit 1
-            fi
-          done
-          echo "✅ All required secrets exist."
+          if [ -z "${_RSS_URL}" ]; then
+            echo "❌ Required secret is missing: RSS_URL" >&2
+            exit 1
+          fi
+          echo "✅ RSS_URL is present (DEEPL_API_KEY is optional for MOCK)."
 
       - name: Run mock Notion insert
         env:
-          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
           RSS_URL: ${{ secrets.RSS_URL }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
         run: |
           set -e
           echo "モックのNotion登録を実行中..."
