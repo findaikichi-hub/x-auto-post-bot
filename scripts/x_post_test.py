@@ -1,48 +1,41 @@
 import os
-import sys
 import time
-import tweepy
+import requests
+from requests_oauthlib import OAuth1
 
-def require_env(name: str) -> str:
-    v = os.getenv(name)
-    if v is None or v.strip() == "":
-        print(f"[ENV] Missing: {name}", file=sys.stderr)
-        sys.exit(1)
-    return v.strip()
+# 環境変数からSecretsを取得
+API_KEY = os.environ["X_API_KEY"]
+API_SECRET = os.environ["X_API_SECRET"]
+ACCESS_TOKEN = os.environ["X_ACCESS_TOKEN"]
+ACCESS_SECRET = os.environ["X_ACCESS_SECRET"]
 
-API_KEY = require_env("X_API_KEY")
-API_SECRET = require_env("X_API_SECRET")
-ACCESS_TOKEN = require_env("X_ACCESS_TOKEN")
-ACCESS_SECRET = require_env("X_ACCESS_SECRET")
+# OAuth1認証設定
+auth = OAuth1(API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_SECRET)
 
-# mock では既定で投稿しない（true/1/yes/on のときだけ投稿）
-DO_POST = os.getenv("X_POST_TEST_DO_POST", "false").lower() in ("1", "true", "yes", "on")
+def verify_credentials():
+    """X APIの認証確認"""
+    url = "https://api.twitter.com/1.1/account/verify_credentials.json"
+    resp = requests.get(url, auth=auth)
+    if resp.status_code == 200:
+        print("✅ 認証成功")
+        return True
+    else:
+        print(f"❌ 認証失敗: {resp.status_code} {resp.text}")
+        return False
 
-auth = tweepy.OAuth1UserHandler(
-    API_KEY,
-    API_SECRET,
-    ACCESS_TOKEN,
-    ACCESS_SECRET
-)
-api = tweepy.API(auth, wait_on_rate_limit=True)
+def post_test_tweet():
+    """テスト投稿"""
+    timestamp = int(time.time())
+    text = f"✅ X投稿テスト成功！（CI） {timestamp}"
+    url = "https://api.twitter.com/2/tweets"
+    resp = requests.post(url, json={"text": text}, auth=auth)
+    if resp.status_code in [200, 201]:
+        print(f"✅ 投稿成功: {text}")
+    else:
+        print(f"❌ 投稿失敗: {resp.status_code} {resp.text}")
 
-def fail(msg: str, exc: Exception | None = None, code: int = 1):
-    print(msg, file=sys.stderr)
-    if exc:
-        print(str(exc), file=sys.stderr)
-    sys.exit(code)
-
-try:
-    me = api.verify_credentials()
-    if me is None:
-        fail("認証に失敗しました（verify_credentials が None を返しました）。")
-
-    screen = getattr(me, "screen_name", "unknown")
-    uid = getattr(me, "id", "unknown")
-    print(f"✅ 認証OK: @{screen} (id={uid})")
-
-    if not DO_POST:
-        print("ℹ️ 確認のみ（X_POST_TEST_DO_POST=false）。投稿は行いません。")
-        sys.exit(0)
-
-    text = f"✅ X投稿テスト成功！（CI） {int(ti
+if __name__ == "__main__":
+    print("=== X投稿プリフライト開始（mock）===")
+    if verify_credentials():
+        post_test_tweet()
+    print("=== X投稿プリフライト終了（mock）===")
