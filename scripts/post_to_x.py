@@ -15,6 +15,7 @@ X_API_KEY = os.environ["X_API_KEY"]
 X_API_SECRET = os.environ["X_API_SECRET"]
 X_ACCESS_TOKEN = os.environ["X_ACCESS_TOKEN"]
 X_ACCESS_SECRET = os.environ["X_ACCESS_SECRET"]
+X_BEARER_TOKEN = os.environ.get("X_BEARER_TOKEN")  # 任意
 
 # ===== 定数 =====
 NOTION_VERSION = "2022-06-28"
@@ -39,6 +40,7 @@ def plain_title(prop) -> str:
 def plain_text(prop) -> str:
     return "".join([(t or {}).get("plain_text", "") for t in (prop or {}).get("rich_text", [])])
 
+# ===== Notion =====
 def notion_query_approved_unposted() -> List[Dict[str, str]]:
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
     headers = {
@@ -100,6 +102,7 @@ def notion_mark_posted(page_id: str, tweet_id: str) -> None:
     res = requests.patch(url, headers=headers, json=payload, timeout=30)
     res.raise_for_status()
 
+# ===== ツイート整形 =====
 URL_RE = re.compile(r"https?://\S+")
 
 def twitter_length(text: str) -> int:
@@ -129,8 +132,11 @@ def build_tweet(title: str, summary: str, url: str) -> str:
         return f"{title}\n{url}"
     return url
 
+# ===== X(v2) =====
 def get_twitter_client() -> tweepy.Client:
+    # bearer_token は任意。与えられていれば併用。
     return tweepy.Client(
+        bearer_token=X_BEARER_TOKEN,
         consumer_key=X_API_KEY,
         consumer_secret=X_API_SECRET,
         access_token=X_ACCESS_TOKEN,
@@ -138,27 +144,33 @@ def get_twitter_client() -> tweepy.Client:
         wait_on_rate_limit=True,
     )
 
+def _extract_error_detail(resp) -> str:
+    try:
+        return resp.json()
+    except Exception:
+        try:
+            return resp.text
+        except Exception:
+            return "unknown error body"
+
 def verify_x_credentials(client: tweepy.Client) -> None:
     try:
-        me = client.get_me()
+        # 明示的にユーザー認証（user context）で呼ぶ
+        me = client.get_me(user_auth=True)
         data = getattr(me, "data", None)
         if not data or not getattr(data, "id", None):
             raise RuntimeError(f"get_me() returned invalid data: {data}")
         notify_slack(f"X認証OK: @{getattr(data, 'username', 'unknown')} (id={data.id})")
     except tweepy.TweepyException as e:
         detail = getattr(e, "response", None)
-        body = None
         if detail is not None:
-            try:
-                body = detail.json()
-            except Exception:
-                body = detail.text
+            body = _extract_error_detail(detail)
             raise RuntimeError(f"X認証失敗 status={detail.status_code}, body={body}") from e
         raise
 
 def post_to_x_v2(client: tweepy.Client, status_text: str) -> str:
     try:
-        resp = client.create_tweet(text=status_text)
+        resp = client.create_tweet(text=status_text, user_auth=True)
         data = getattr(resp, "data", None) or {}
         tweet_id = str(data.get("id") or "")
         if not tweet_id:
@@ -167,13 +179,11 @@ def post_to_x_v2(client: tweepy.Client, status_text: str) -> str:
     except tweepy.TweepyException as e:
         detail = getattr(e, "response", None)
         if detail is not None:
-            try:
-                body = detail.json()
-            except Exception:
-                body = detail.text
+            body = _extract_error_detail(detail)
             raise RuntimeError(f"X投稿失敗 status={detail.status_code}, body={body}") from e
         raise
 
+# ===== メイン =====
 def main() -> None:
     notify_slack("=== X投稿処理開始（v2）===")
     try:
