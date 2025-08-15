@@ -2,7 +2,6 @@ import os
 import re
 from datetime import datetime, timezone
 from typing import List, Dict
-
 import requests
 import tweepy
 
@@ -10,7 +9,6 @@ import tweepy
 NOTION_API_KEY = os.environ["NOTION_API_KEY"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 SLACK_WEBHOOK_URL = os.environ["SLACK_WEBHOOK_URL"]
-
 X_API_KEY = os.environ["X_API_KEY"]
 X_API_SECRET = os.environ["X_API_SECRET"]
 X_ACCESS_TOKEN = os.environ["X_ACCESS_TOKEN"]
@@ -21,7 +19,6 @@ X_BEARER_TOKEN = os.environ.get("X_BEARER_TOKEN")  # 任意
 NOTION_VERSION = "2022-06-28"
 USER_AGENT = "notion-x-mvp/1.0 (prod)"
 TCO_URL_LENGTH = 23
-DRY_RUN = os.environ.get("DRY_RUN", "").lower() in {"1", "true", "yes"}
 
 # ===== 共通 =====
 def notify_slack(message: str) -> None:
@@ -57,7 +54,6 @@ def notion_query_approved_unposted() -> List[Dict[str, str]]:
             ]
         }
     }
-
     results = []
     has_more = True
     next_cursor = None
@@ -118,12 +114,14 @@ def build_tweet(title: str, summary: str, url: str) -> str:
         candidate = f"{title}\n{summary}\n{url}" if title else f"{summary}\n{url}"
         if twitter_length(candidate) <= 280:
             return candidate
-        remain = 280 - twitter_length((f"{title}\n\n{url}" if title else f"\n{url}")) - 1
-        remain = max(remain, 0)
-        trimmed = summary if len(summary) <= remain else (summary[: max(remain - 1, 0)] + ("…" if remain > 0 else ""))
-        candidate = f"{title}\n{trimmed}\n{url}" if title else f"{trimmed}\n{url}"
-        if twitter_length(candidate) <= 280:
-            return candidate
+
+    remain = 280 - twitter_length((f"{title}\n\n{url}" if title else f"\n{url}")) - 1
+    remain = max(remain, 0)
+    trimmed = summary if len(summary) <= remain else (summary[: max(remain - 1, 0)] + ("…" if remain > 0 else ""))
+
+    candidate = f"{title}\n{trimmed}\n{url}" if title else f"{trimmed}\n{url}"
+    if twitter_length(candidate) <= 280:
+        return candidate
 
     if title:
         max_title_len = 280 - TCO_URL_LENGTH - 1
@@ -134,7 +132,6 @@ def build_tweet(title: str, summary: str, url: str) -> str:
 
 # ===== X(v2) =====
 def get_twitter_client() -> tweepy.Client:
-    # bearer_token は任意。与えられていれば併用。
     return tweepy.Client(
         bearer_token=X_BEARER_TOKEN,
         consumer_key=X_API_KEY,
@@ -155,7 +152,6 @@ def _extract_error_detail(resp) -> str:
 
 def verify_x_credentials(client: tweepy.Client) -> None:
     try:
-        # 明示的にユーザー認証（user context）で呼ぶ
         me = client.get_me(user_auth=True)
         data = getattr(me, "data", None)
         if not data or not getattr(data, "id", None):
@@ -197,13 +193,8 @@ def main() -> None:
 
         posted = 0
         previews = []
-
         for p in pages:
             tweet = build_tweet(p["title"], p["summary"], p["url"])
-            if DRY_RUN:
-                previews.append(f"[DRY_RUN] {p['id']}: {tweet}")
-                continue
-
             try:
                 tweet_id = post_to_x_v2(client, tweet)
                 notion_mark_posted(p["id"], tweet_id)
@@ -214,11 +205,9 @@ def main() -> None:
                 previews.append(f"- NG {p['id']}: {str(e)}")
                 notify_slack(f"❌ 投稿失敗: page={p['id']} | url={p['url']} | error={e}")
 
-        if DRY_RUN:
-            notify_slack("（DRY_RUN）X投稿プレビュー:\n" + "\n".join(previews[:10]) + ("" if len(previews) <= 10 else "\n…"))
-        else:
-            notify_slack(f"X投稿完了: {posted}件 / 対象 {len(pages)}件\n" + "\n".join(previews[:10]) + ("" if len(previews) <= 10 else "\n…"))
-
+        notify_slack(f"X投稿完了: {posted}件 / 対象 {len(pages)}件\n" +
+                     "\n".join(previews[:10]) +
+                     ("" if len(previews) <= 10 else "\n…"))
     except Exception as e:
         notify_slack(f"❌ X投稿処理エラー: {e}")
         raise
