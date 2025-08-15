@@ -18,57 +18,51 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          sudo apt-get update && sudo apt-get install -y jq
 
       - name: Run Notion Insert Script (Mock)
         id: run_script
-        shell: bash
         run: |
           set +e
           python scripts/notion_insert.py > script_output.log 2>&1
           exit_code=$?
-          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
-
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
           if [ $exit_code -ne 0 ]; then
-            echo "status=failed" >> "$GITHUB_OUTPUT"
-            error_json=$(jq -Rs '.' < script_output.log)
-            echo "error_json=$error_json" >> "$GITHUB_OUTPUT"
+            echo "status=failed" >> $GITHUB_OUTPUT
+            # Slack用にエラー内容をBase64エンコード
+            error_msg=$(base64 -w0 script_output.log)
+            echo "error_message=$error_msg" >> $GITHUB_OUTPUT
           else
-            echo "status=success" >> "$GITHUB_OUTPUT"
-            echo 'error_json=""' >> "$GITHUB_OUTPUT"
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "error_message=" >> $GITHUB_OUTPUT
           fi
           set -e
 
-      - name: Prepare Slack Payload JSON file
-        id: prepare_slack
-        shell: bash
-        env:
-          STATUS: ${{ steps.run_script.outputs.status }}
-          ERROR_JSON: ${{ steps.run_script.outputs.error_json }}
+      - name: Create Slack Payload JSON
+        id: create_payload
         run: |
+          status="${{ steps.run_script.outputs.status }}"
+          error_message="${{ steps.run_script.outputs.error_message }}"
+
+          if [ "$status" = "success" ]; then
+            color="good"
+            message="Notion登録（モック）が成功しました"
+          else
+            color="danger"
+            decoded_error=$(echo "$error_message" | base64 -d)
+            message="Notion登録（モック）が失敗しました\n\nエラー内容:\n\`\`\`$decoded_error\`\`\`"
+          fi
+
           jq -n \
-            --arg status "$STATUS" \
-            --argjson error_msg $ERROR_JSON '
-              ($status == "success" ? "good" : "danger") as $color
-              | ( if $status == "success"
-                  then "Notion登録（モック）が成功しました"
-                  else ("Notion登録（モック）が失敗しました\n\nエラー内容:\n```" + $error_msg + "```")
-                end ) as $message
-              | {
-                  text: ("モックワークフロー実行結果: " + $status),
-                  attachments: [
-                    {
-                      color: $color,
-                      text: $message
-                    }
-                  ]
-                }
-            ' > slack_payload.json
+            --arg text "モックワークフロー実行結果: $status" \
+            --arg color "$color" \
+            --arg msg "$message" \
+            '{text: $text, attachments: [{color: $color, text: $msg}]}' \
+            > slack_payload.json
 
       - name: Send Slack Notification
         if: always()
         uses: slackapi/slack-github-action@v1.24.0
         with:
-          payload-file-path: slack_payload.json
+          payload-file-path: ./slack_payload.json
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
