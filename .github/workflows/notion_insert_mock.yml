@@ -28,8 +28,31 @@ jobs:
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
           if [ $exit_code -ne 0 ]; then
             echo "status=failed" >> $GITHUB_OUTPUT
-            # Slack用にエラー内容をBase64エンコード（改行対策）
-            error_msg=$(base64 -w0 script_output.log)
-            echo "error_message=$error_msg" >> $GITHUB_OUTPUT
+            # Slack用にエラー内容をJSON安全な文字列に変換（コードブロック形式）
+            error_json=$(cat script_output.log | jq -Rs '.')
+            echo "error_message=${error_json}" >> $GITHUB_OUTPUT
           else
-            echo "status=su
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "error_message=\"\"" >> $GITHUB_OUTPUT
+          fi
+          set -e
+
+      - name: Send Slack Notification
+        if: always()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "モックワークフロー実行結果: ${{ steps.run_script.outputs.status }}",
+              "attachments": [
+                {
+                  "color": "${{ steps.run_script.outputs.status == 'success' && 'good' || 'danger' }}",
+                  "text": ${{ steps.run_script.outputs.status == 'success'
+                    && toJSON('Notion登録（モック）が成功しました')
+                    || toJSON(format("Notion登録（モック）が失敗しました\n\nエラー内容:\n```{0}```", steps.run_script.outputs.error_message | fromJSON))
+                  }}
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
