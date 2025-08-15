@@ -1,21 +1,71 @@
-import json
 import os
+import requests
+import feedparser
+from deep_translator import DeeplTranslator
 
-MOCK_FILE = "notion_mock_data.json"
+# ==== 環境変数からキー・設定を取得 ====
+NOTION_API_KEY = os.environ["NOTION_API_KEY"]
+NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
+DEEPL_API_KEY = os.environ["DEEPL_API_KEY"]
+RSS_URL = os.environ["RSS_URL"]
 
-def fetch_existing_urls_mock():
-    if os.path.exists(MOCK_FILE):
-        with open(MOCK_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return set(data.get("entries", []))
-    return set()
+NOTION_API_URL = "https://api.notion.com/v1/pages"
+NOTION_QUERY_URL = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
 
-def insert_to_notion_mock(title, url):
-    data = {"entries": []}
-    if os.path.exists(MOCK_FILE):
-        with open(MOCK_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    data["entries"].append(url)
-    with open(MOCK_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    print(f"[MOCK] Added to mock DB: {title} ({url})")
+headers = {
+    "Authorization": f"Bearer {NOTION_API_KEY}",
+    "Content-Type": "application/json",
+    "Notion-Version": "2022-06-28"
+}
+
+# ==== 重複チェック ====
+def is_url_already_registered(url: str) -> bool:
+    """Notionデータベースに既に同じURLがあるか確認"""
+    query = {
+        "filter": {
+            "property": "URL",
+            "url": {
+                "equals": url
+            }
+        }
+    }
+    response = requests.post(NOTION_QUERY_URL, headers=headers, json=query)
+    response.raise_for_status()
+    data = response.json()
+    return len(data.get("results", [])) > 0
+
+# ==== Notion 登録 ====
+def add_page_to_notion(title: str, url: str, summary: str):
+    """記事をNotionに追加（重複除外済み）"""
+    if is_url_already_registered(url):
+        print(f"⚠️ 既存URLのためスキップ: {url}")
+        return
+
+    payload = {
+        "parent": {"database_id": NOTION_DATABASE_ID},
+        "properties": {
+            "Name": {"title": [{"text": {"content": title}}]},
+            "URL": {"url": url},
+            "Summary": {"rich_text": [{"text": {"content": summary}}]}
+        }
+    }
+    response = requests.post(NOTION_API_URL, headers=headers, json=payload)
+    response.raise_for_status()
+    print(f"✅ 登録完了: {title}")
+
+# ==== 翻訳 ====
+def translate_text(text: str) -> str:
+    translator = DeeplTranslator(api_key=DEEPL_API_KEY, source="EN", target="JA")
+    return translator.translate(text)
+
+# ==== RSS取得 ====
+def fetch_and_register_articles():
+    feed = feedparser.parse(RSS_URL)
+    for entry in feed.entries:
+        title = entry.title
+        url = entry.link
+        summary = translate_text(entry.summary)
+        add_page_to_notion(title, url, summary)
+
+if __name__ == "__main__":
+    fetch_and_register_articles()
