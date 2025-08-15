@@ -1,2 +1,5 @@
-feedparser
 requests
+feedparser
+deep_translator
+beautifulsoup4
+tweepy
