@@ -10,26 +10,44 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run Notion insert
+      - name: Install required Python packages
+        run: |
+          set -e
+          pip install -r requirements.txt
+
+      - name: Run Notion insert (production)
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          RSS_URL: ${{ secrets.RSS_URL }}
         run: |
           set -e
           echo "本番のNotion登録を実行中..."
-          python3 scripts/notion_insert.py
+          python scripts/notion_insert.py
           echo "Notion登録（本番）が成功しました"
 
-      - name: Send Slack notification
+      - name: Send Slack notification (success)
+        if: success()
         uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
             {
-              "text": "Notion登録（本番）が成功しました",
-              "attachments": [
-                {
-                  "color": "good",
-                  "text": "Notion登録（本番）が成功しました"
-                }
-              ]
+              "text": "✅ Notion登録（本番）が成功しました"
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Send Slack notification (failure)
+        if: failure()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "❌ Notion登録（本番）が失敗しました"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
