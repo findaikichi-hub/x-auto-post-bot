@@ -33,6 +33,8 @@ jobs:
       - name: Validate required secrets for MOCK
         env:
           _RSS_URL: ${{ secrets.RSS_URL }}
+          _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           _DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }} # 任意
         run: |
           set -e
@@ -40,7 +42,15 @@ jobs:
             echo "❌ Required secret is missing: RSS_URL" >&2
             exit 1
           fi
-          echo "✅ RSS_URL is present (DEEPL_API_KEY is optional for MOCK)."
+          if [ -z "${_NOTION_API_KEY}" ]; then
+            echo "❌ Required secret is missing: NOTION_API_KEY" >&2
+            exit 1
+          fi
+          if [ -z "${_NOTION_DATABASE_ID}" ]; then
+            echo "❌ Required secret is missing: NOTION_DATABASE_ID" >&2
+            exit 1
+          fi
+          echo "✅ All required secrets for MOCK are present (DEEPL_API_KEY is optional)."
 
       - name: Backup repository to local-like storage
         run: |
@@ -54,6 +64,8 @@ jobs:
         env:
           RSS_URL: ${{ secrets.RSS_URL }}
           DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
           set -e
           echo "=== 運用テスト実行中 ==="
