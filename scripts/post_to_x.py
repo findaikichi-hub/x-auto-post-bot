@@ -1,6 +1,5 @@
 import os
 import re
-import json
 from datetime import datetime, timezone
 from typing import List, Dict
 
@@ -20,10 +19,10 @@ X_ACCESS_SECRET = os.environ["X_ACCESS_SECRET"]
 # ===== 定数 =====
 NOTION_VERSION = "2022-06-28"
 USER_AGENT = "notion-x-mvp/1.0 (prod)"
-TCO_URL_LENGTH = 23  # t.co の固定長換算
+TCO_URL_LENGTH = 23
 DRY_RUN = os.environ.get("DRY_RUN", "").lower() in {"1", "true", "yes"}
 
-# ===== 共通ユーティリティ =====
+# ===== 共通 =====
 def notify_slack(message: str) -> None:
     try:
         res = requests.post(SLACK_WEBHOOK_URL, json={"text": message}, timeout=15)
@@ -35,14 +34,12 @@ def _np(prop, key, default=None):
     return (prop or {}).get(key, default)
 
 def plain_title(prop) -> str:
-    return "".join([_np(t, "plain_text", "") for t in (prop or {}).get("title", [])])
+    return "".join([(t or {}).get("plain_text", "") for t in (prop or {}).get("title", [])])
 
 def plain_text(prop) -> str:
-    return "".join([_np(t, "plain_text", "") for t in (prop or {}).get("rich_text", [])])
+    return "".join([(t or {}).get("plain_text", "") for t in (prop or {}).get("rich_text", [])])
 
-# ===== Notion I/O =====
 def notion_query_approved_unposted() -> List[Dict[str, str]]:
-    """Select=approved AND Posted=false を全件取得（ページネーション対応）"""
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
@@ -85,7 +82,6 @@ def notion_query_approved_unposted() -> List[Dict[str, str]]:
     return pages
 
 def notion_mark_posted(page_id: str, tweet_id: str) -> None:
-    """Posted=true / TweetID / PostedAt を反映"""
     url = f"https://api.notion.com/v1/pages/{page_id}"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
@@ -104,15 +100,12 @@ def notion_mark_posted(page_id: str, tweet_id: str) -> None:
     res = requests.patch(url, headers=headers, json=payload, timeout=30)
     res.raise_for_status()
 
-# ===== ツイート整形 =====
 URL_RE = re.compile(r"https?://\S+")
 
 def twitter_length(text: str) -> int:
-    """URLをt.co換算(TCO_URL_LENGTH)で数え直した文字数"""
     return len(URL_RE.sub("x" * TCO_URL_LENGTH, text))
 
 def build_tweet(title: str, summary: str, url: str) -> str:
-    """タイトル/要約/URLから280文字内の最適組合せを生成"""
     title = (title or "").strip()
     summary = (summary or "").strip()
     url = (url or "").strip()
@@ -136,7 +129,6 @@ def build_tweet(title: str, summary: str, url: str) -> str:
         return f"{title}\n{url}"
     return url
 
-# ===== X(v2) クライアント =====
 def get_twitter_client() -> tweepy.Client:
     return tweepy.Client(
         consumer_key=X_API_KEY,
@@ -147,7 +139,6 @@ def get_twitter_client() -> tweepy.Client:
     )
 
 def verify_x_credentials(client: tweepy.Client) -> None:
-    """投稿前プレチェック。401や権限エラーを早期検出して中断"""
     try:
         me = client.get_me()
         data = getattr(me, "data", None)
@@ -166,7 +157,6 @@ def verify_x_credentials(client: tweepy.Client) -> None:
         raise
 
 def post_to_x_v2(client: tweepy.Client, status_text: str) -> str:
-    """v2 create_tweet で投稿し、ツイートID（文字列）を返す"""
     try:
         resp = client.create_tweet(text=status_text)
         data = getattr(resp, "data", None) or {}
@@ -184,7 +174,6 @@ def post_to_x_v2(client: tweepy.Client, status_text: str) -> str:
             raise RuntimeError(f"X投稿失敗 status={detail.status_code}, body={body}") from e
         raise
 
-# ===== メイン =====
 def main() -> None:
     notify_slack("=== X投稿処理開始（v2）===")
     try:
