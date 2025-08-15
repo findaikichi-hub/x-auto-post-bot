@@ -1,130 +1,142 @@
 import os
-import sys
-import json
-import typing as t
 import requests
 import feedparser
+from deep_translator import DeeplTranslator
 
-# deep_translator は小文字言語コード（en/ja）を使用する
-try:
-    from deep_translator import DeeplTranslator
-except Exception:
-    DeeplTranslator = None
-
-# ===== 必須環境変数チェック（本番は Notion 必須）=====
-required_envs = ["NOTION_API_KEY", "NOTION_DATABASE_ID", "RSS_URL"]
-missing = [v for v in required_envs if not os.environ.get(v)]
-if missing:
-    print(f"❌ 必須環境変数が未設定です: {', '.join(missing)}", file=sys.stderr)
-    sys.exit(1)
-
+# ===== 設定（Secrets をそのまま参照。任意は .get()）=====
 NOTION_API_KEY = os.environ["NOTION_API_KEY"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 RSS_URL = os.environ["RSS_URL"]
-DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY", "")
+SLACK_WEBHOOK_URL = os.environ["SLACK_WEBHOOK_URL"]
+DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY", "")  # 任意
 
-NOTION_VERSION = "2022-06-28"
-NOTION_CREATE_PAGE_URL = "https://api.notion.com/v1/pages"
-NOTION_DB_RETRIEVE_URL = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}"
-NOTION_DB_QUERY_URL = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
+# deep_translator の仕様に合わせ言語コードは小文字固定
+SRC_LANG = "en"
+TGT_LANG = "ja"
 
-headers = {
-    "Authorization": f"Bearer {NOTION_API_KEY}",
-    "Content-Type": "application/json",
-    "Notion-Version": NOTION_VERSION,
-}
+# ===== 関数 =====
+def get_existing_urls():
+    """Notionの下書きDBから既存URL一覧を取得（重複登録防止用）"""
+    url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28",
+    }
 
-def retrieve_db_schema() -> dict:
-    res = requests.get(NOTION_DB_RETRIEVE_URL, headers=headers, timeout=30)
-    res.raise_for_status()
-    return res.json().get("properties", {})
+    existing_urls = set()
+    has_more = True
+    next_cursor = None
 
-def find_property_names(props: dict) -> t.Dict[str, t.Optional[str]]:
-    title_prop = None
-    url_prop = None
-    summary_prop = None
+    while has_more:
+        payload = {}
+        if next_cursor:
+            payload["start_cursor"] = next_cursor
 
-    for name, meta in props.items():
-        if meta.get("type") == "title":
-            title_prop = name
-            break
-    for name, meta in props.items():
-        if meta.get("type") == "url":
-            url_prop = name
-            break
+        res = requests.post(url, headers=headers, json=payload, timeout=30)
+        res.raise_for_status()
+        data = res.json()
 
-    rich_text_candidates = [name for name, meta in props.items() if meta.get("type") == "rich_text"]
-    for pref in ["Summary", "要約", "概要"]:
-        if pref in rich_text_candidates:
-            summary_prop = pref
-            break
-    if summary_prop is None and rich_text_candidates:
-        summary_prop = rich_text_candidates[0]
+        for page in data.get("results", []):
+            props = page.get("properties", {})
+            url_prop = props.get("URL", {}).get("url")
+            if url_prop:
+                existing_urls.add(url_prop)
 
-    return {"title": title_prop, "url": url_prop, "summary": summary_prop}
+        has_more = data.get("has_more", False)
+        next_cursor = data.get("next_cursor")
 
-def is_url_already_registered(url_prop: t.Optional[str], url_value: str) -> bool:
-    if not url_prop:
-        print("⚠️ URL プロパティが存在しないため重複チェックをスキップします。")
-        return False
-    query = {"filter": {"property": url_prop, "url": {"equals": url_value}}}
-    res = requests.post(NOTION_DB_QUERY_URL, headers=headers, json=query, timeout=30)
-    res.raise_for_status()
-    return len(res.json().get("results", [])) > 0
+    return existing_urls
 
-def add_page_to_notion(title_prop: str, url_prop: t.Optional[str], summary_prop: t.Optional[str],
-                       title: str, url: str, summary: str) -> None:
-    properties: dict = {}
-    if not title_prop:
-        raise RuntimeError("データベースに title 型プロパティが存在しません。")
-    properties[title_prop] = {"title": [{"text": {"content": title}}]}
-    if url_prop:
-        properties[url_prop] = {"url": url}
-    if summary_prop:
-        properties[summary_prop] = {"rich_text": [{"text": {"content": summary}}]}
 
-    payload = {"parent": {"database_id": NOTION_DATABASE_ID}, "properties": properties}
-    res = requests.post(NOTION_CREATE_PAGE_URL, headers=headers, json=payload, timeout=30)
-    res.raise_for_status()
+def filter_new_articles(articles, existing_urls):
+    """
+    articles: [{'title': str, 'url': str, 'summary': str}, ...]
+    existing_urls: set([...])
+    """
+    return [a for a in articles if a.get("url") and a["url"] not in existing_urls]
 
-def translate(text: str) -> str:
+
+def translate_text(text):
+    """DeepLで日本語に翻訳（DEEPL_API_KEY が未設定なら原文返却）"""
     if not text:
         return ""
-    if not DEEPL_API_KEY or DeeplTranslator is None:
+    if not DEEPL_API_KEY:
         return text
+    translator = DeeplTranslator(api_key=DEEPL_API_KEY, source=SRC_LANG, target=TGT_LANG)
+    return translator.translate(text)
+
+
+def add_to_notion(article):
+    """記事をNotionの下書きDBに登録（Select = draft）"""
+    url = "https://api.notion.com/v1/pages"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28",
+    }
+    payload = {
+        "parent": {"database_id": NOTION_DATABASE_ID},
+        "properties": {
+            "Title": {"title": [{"text": {"content": article["title"]}}]},
+            "URL": {"url": article["url"]},
+            "Select": {"select": {"name": "draft"}},
+        },
+    }
+    res = requests.post(url, headers=headers, json=payload, timeout=30)
+    res.raise_for_status()
+
+
+def notify_slack(message):
+    """Slack通知（text フィールド必須）"""
+    payload = {"text": message}
+    res = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=15)
+    res.raise_for_status()
+
+
+def main():
     try:
-        translator = DeeplTranslator(api_key=DEEPL_API_KEY, source="en", target="ja")
-        return translator.translate(text)
+        # RSS取得
+        feed = feedparser.parse(RSS_URL)
+        articles = []
+        for entry in getattr(feed, "entries", []):
+            title_raw = getattr(entry, "title", "") or ""
+            link = getattr(entry, "link", "") or ""
+            summary_raw = getattr(entry, "summary", "") if hasattr(entry, "summary") else ""
+
+            if not title_raw or not link:
+                # タイトル or URL 無しはスキップ（ログはSlackに載せない）
+                continue
+
+            translated_title = translate_text(title_raw)
+            translated_summary = translate_text(summary_raw) if summary_raw else ""
+
+            articles.append(
+                {
+                    "title": translated_title,
+                    "url": link,
+                    "summary": translated_summary,
+                }
+            )
+
+        # 既存URL取得 & 新規のみ抽出
+        existing_urls = get_existing_urls()
+        new_articles = filter_new_articles(articles, existing_urls)
+
+        # 登録処理
+        for article in new_articles:
+            add_to_notion(article)
+
+        # Slack通知
+        notify_slack(f"新規登録: {len(new_articles)}件 / 取得: {len(articles)}件 / 重複スキップ: {len(articles) - len(new_articles)}件")
+
     except Exception as e:
-        print(f"⚠️ 翻訳に失敗しました。原文を使用します: {e}", file=sys.stderr)
-        return text
+        # 失敗通知してリスロー（Actions failure に反映）
+        try:
+            notify_slack(f"エラー発生: {str(e)}")
+        finally:
+            raise
 
-def fetch_and_register_articles():
-    props = retrieve_db_schema()
-    names = find_property_names(props)
-    print(f"🔎 検出したプロパティ: title='{names['title']}' url='{names['url']}' summary='{names['summary']}'")
-
-    feed = feedparser.parse(RSS_URL)
-    entries = getattr(feed, "entries", [])
-    print(f"📥 RSS 取得件数: {len(entries)}")
-
-    for entry in entries:
-        title = (getattr(entry, "title", "") or "").strip()
-        url = (getattr(entry, "link", "") or "").strip()
-        summary_raw = (getattr(entry, "summary", "") or "")
-
-        if not title or not url:
-            print("⚠️ タイトルまたはURLが欠落しているためスキップ")
-            continue
-        if is_url_already_registered(names["url"], url):
-            print(f"⏭️ 重複スキップ: {url}")
-            continue
-
-        summary_ja = translate(summary_raw)
-        add_page_to_notion(names["title"], names["url"], names["summary"], title, url, summary_ja)
-        print(f"✅ 登録完了: {title}")
 
 if __name__ == "__main__":
-    print("=== 本番 Notion 登録開始 ===")
-    fetch_and_register_articles()
-    print("=== 本番 Notion 登録完了 ===")
+    main()
