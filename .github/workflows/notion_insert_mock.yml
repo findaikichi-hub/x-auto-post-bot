@@ -14,16 +14,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install dependencies
         run: pip install feedparser requests
-
+      - name: Set PYTHONPATH
+        run: export PYTHONPATH="${GITHUB_WORKSPACE}"
       - name: Run Notion Insert (Mock)
-        run: |
-          export PYTHONPATH="${GITHUB_WORKSPACE}"
-          python scripts/notion_insert.py
+        run: python scripts/notion_insert.py
