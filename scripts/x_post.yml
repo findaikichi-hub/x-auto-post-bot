@@ -1,0 +1,121 @@
+name: X Post
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Notion取得と同一のタイムスロットで2分遅延（データ到着のラグ吸収）
+    - cron: "2 0 * * *"
+    - cron: "2 6 * * *"
+    - cron: "2 12 * * *"
+    - cron: "2 18 * * *"
+
+concurrency:
+  group: x-post-prod
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  x_post_prod:
+    runs-on: ubuntu-latest
+    env:
+      RUN_START_MSG: "=== X本番実行開始 ==="
+      RUN_DOING_MSG: "Xへ投稿中..."
+      RUN_SUCCESS_MSG: "X投稿（本番）が完了しました"
+      RUN_END_MSG: "=== X本番実行終了 ==="
+      SLACK_SUCCESS_TEXT: "✅ X投稿（本番）が完了しました"
+      SLACK_FAILURE_TEXT: "❌ X投稿（本番）が失敗しました（依存/Secrets/実行を確認してください）"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install & verify Python dependencies
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+          python -m pip install requests
+          python - <<'PY'
+          import sys, pkgutil
+          required = ["requests"]
+          missing = [m for m in required if pkgutil.find_loader(m) is None]
+          if missing:
+              print("Missing modules:", ", ".join(missing), file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Validate required secrets for PROD
+        env:
+          _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          _SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          _X_API_KEY: ${{ secrets.X_API_KEY }}
+          _X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          _X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          _X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+        run: |
+          set -e
+          for s in _NOTION_API_KEY _NOTION_DATABASE_ID _SLACK_WEBHOOK_URL _X_API_KEY _X_API_SECRET _X_ACCESS_TOKEN _X_ACCESS_SECRET; do
+            if [ -z "${!s}" ]; then
+              echo "❌ Required secret is missing: ${s#_}" >&2
+              exit 1
+            fi
+          done
+          echo "✅ All required secrets for PROD are present."
+
+      - name: Backup repository to local-like storage
+        run: |
+          set -e
+          BACKUP_DIR="local_backups/$(date +'%Y%m%d_%H%M%S')"
+          mkdir -p "$BACKUP_DIR"
+          rsync -av --exclude "local_backups" ./ "$BACKUP_DIR"/
+          echo "✅ Backup completed at $BACKUP_DIR"
+
+      - name: Python syntax check (preflight)
+        run: |
+          set -e
+          python -m py_compile scripts/x_post.py
+          echo "✅ Syntax OK"
+
+      - name: Run X Post (production)
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+        run: |
+          set -e
+          echo "$RUN_START_MSG"
+          echo "$RUN_DOING_MSG"
+          python scripts/x_post.py
+          echo "$RUN_SUCCESS_MSG"
+          echo "$RUN_END_MSG"
+
+      - name: Send Slack notification (success)
+        if: success()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            { "text": "${{ env.SLACK_SUCCESS_TEXT }}" }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Send Slack notification (failure)
+        if: failure()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            { "text": "${{ env.SLACK_FAILURE_TEXT }}" }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
