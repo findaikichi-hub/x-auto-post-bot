@@ -1,32 +1,89 @@
-name: Notion Insert (Production)
-
+name: Notion Insert Production
 on:
-  schedule:
-    - cron: "0 * * * *"  # 毎時0分に実行
   workflow_dispatch:
+    inputs:
+      title:
+        description: "Notionページのタイトル"
+        required: true
+      status:
+        description: "ステータス"
+        required: true
+      description:
+        description: "説明文"
+        required: false
 
 jobs:
-  notion-insert-prod:
+  insert-to-notion:
     runs-on: ubuntu-latest
-    env:
-      PYTHONPATH: ${{ github.workspace }}
-      USE_MOCK: "false"
-      NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-      NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-      DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
-      RSS_URL: ${{ secrets.RSS_URL }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+      - name: Create Notion page via API
+        env:
+          NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: |
+          set -e
+          payload=$(jq -n \
+            --arg parent_id "$NOTION_DATABASE_ID" \
+            --arg title "${{ github.event.inputs.title }}" \
+            --arg status "${{ github.event.inputs.status }}" \
+            --arg description "${{ github.event.inputs.description }}" \
+            '{
+              parent: { database_id: $parent_id },
+              properties: {
+                Name: {
+                  title: [
+                    { text: { content: $title } }
+                  ]
+                },
+                Status: {
+                  select: { name: $status }
+                }
+              },
+              children: (
+                if $description != "" then
+                  [
+                    {
+                      object: "block",
+                      type: "paragraph",
+                      paragraph: {
+                        rich_text: [
+                          { text: { content: $description } }
+                        ]
+                      }
+                    }
+                  ]
+                else [] end
+              )
+            }'
+          )
 
-      - name: Install dependencies
-        run: pip install feedparser requests
+          curl -s -X POST "https://api.notion.com/v1/pages" \
+            -H "Authorization: Bearer $NOTION_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "Notion-Version: 2022-06-28" \
+            --data "$payload"
 
-      - name: Run Notion Insert
-        run: python scripts/notion_insert.py
+      - name: Send Slack Notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -e
+          slack_payload=$(jq -n \
+            --arg text "Notion登録が完了しました" \
+            --arg att_text "タイトル: ${{ github.event.inputs.title }}\nステータス: ${{ github.event.inputs.status }}" \
+            '{
+              text: $text,
+              attachments: [
+                {
+                  color: "good",
+                  text: $att_text
+                }
+              ]
+            }'
+          )
+          curl -s -X POST -H 'Content-type: application/json' \
+            --data "$slack_payload" \
+            "$SLACK_WEBHOOK_URL"
