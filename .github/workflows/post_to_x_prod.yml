@@ -2,6 +2,11 @@ name: Post to X Prod
 
 on:
   workflow_dispatch:
+    inputs:
+      DRY_RUN:
+        description: "Dry-run（trueで投稿せずプレビューのみ）"
+        required: false
+        default: "false"
   schedule:
     # 毎時02分
     - cron: "2 * * * *"
@@ -69,12 +74,12 @@ jobs:
         run: |
           set -e
           for s in _X_API_KEY _X_API_SECRET _X_ACCESS_TOKEN _X_ACCESS_SECRET _SLACK_WEBHOOK_URL _NOTION_API_KEY _NOTION_DATABASE_ID; do
-            if [ -z "${!s}" ]; then
+            val="${!s}"
+            if [ -z "$val" ]; then
               echo "❌ Required secret is missing: ${s#_}" >&2
               exit 1
             fi
-            # 簡易長さチェック
-            if [ ${#${!s}} -lt 10 ]; then
+            if [ ${#val} -lt 10 ]; then
               echo "❌ Secret seems too short: ${s#_}" >&2
               exit 1
             fi
@@ -95,7 +100,7 @@ jobs:
           python -m py_compile scripts/post_to_x.py
           echo "✅ Syntax OK"
 
-      - name: Run production X post
+      - name: Run production X post (v2)
         env:
           X_API_KEY: ${{ secrets.X_API_KEY }}
           X_API_SECRET: ${{ secrets.X_API_SECRET }}
@@ -104,7 +109,6 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          # DRY_RUN を有効化したい場合は、手動実行時に true を渡す
           DRY_RUN: ${{ inputs.DRY_RUN }}
         run: |
           set -e
