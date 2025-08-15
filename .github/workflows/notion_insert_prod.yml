@@ -4,29 +4,29 @@ on:
   workflow_dispatch:
 
 jobs:
-  insert_mock:
+  insert:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run mock Notion insert
+      - name: Run Notion insert
         run: |
           set -e
-          echo "モックのNotion登録を実行中..."
-          # 実際の処理はここに記述（例: curlやpythonスクリプト呼び出し）
-          echo "Notion登録（モック）が成功しました"
+          echo "本番のNotion登録を実行中..."
+          python3 scripts/notion_insert.py
+          echo "Notion登録（本番）が成功しました"
 
       - name: Send Slack notification
         uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
             {
-              "text": "Notion登録（モック）が成功しました",
+              "text": "Notion登録（本番）が成功しました",
               "attachments": [
                 {
                   "color": "good",
-                  "text": "Notion登録（モック）が成功しました"
+                  "text": "Notion登録（本番）が成功しました"
                 }
               ]
             }
