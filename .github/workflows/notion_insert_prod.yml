@@ -79,7 +79,7 @@ jobs:
           echo "=== 本番実行開始 ==="
           echo "Notion登録を実行中..."
           python scripts/notion_insert.py
-          echo "Notion登録（本番）が成功しました」
+          echo "Notion登録（本番）が成功しました"
           echo "=== 本番実行終了 ==="
 
       - name: Send Slack notification (success)
