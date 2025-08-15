@@ -9,6 +9,7 @@ jobs:
   notion-insert-prod:
     runs-on: ubuntu-latest
     env:
+      PYTHONPATH: ${{ github.workspace }}
       USE_MOCK: "false"
       NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
       NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
@@ -26,9 +27,6 @@ jobs:
 
       - name: Install dependencies
         run: pip install feedparser requests
-
-      - name: Set PYTHONPATH
-        run: export PYTHONPATH="${GITHUB_WORKSPACE}"
 
       - name: Run Notion Insert
         run: python scripts/notion_insert.py
