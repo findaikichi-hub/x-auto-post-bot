@@ -1,33 +1,25 @@
-name: Post to X Prod
+name: Post to X
 
 on:
   workflow_dispatch:
-    inputs:
-      DRY_RUN:
-        description: "Dry-run（trueで投稿せずプレビューのみ）"
-        required: false
-        default: "false"
-  schedule:
-    - cron: "2 * * * *" # 毎時02分
 
 concurrency:
-  group: post-to-x-prod
+  group: post-to-x
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  post_to_x_prod:
+  post_to_x:
     runs-on: ubuntu-latest
     env:
-      RUN_START_MSG: "=== 本番投稿実行開始 ==="
-      RUN_DOING_MSG: "本番投稿処理中..."
-      RUN_SUCCESS_MSG: "✅ 本番投稿が成功しました"
-      RUN_END_MSG: "=== 本番投稿実行終了 ==="
-      SLACK_SUCCESS_TEXT: "✅ X投稿（本番）が成功しました"
-      SLACK_FAILURE_TEXT: "❌ X投稿（本番）が失敗しました（依存/Secrets/実行を確認してください）"
-
+      RUN_START_MSG: "=== 投稿実行開始 ==="
+      RUN_DOING_MSG: "投稿処理中..."
+      RUN_SUCCESS_MSG: "投稿が成功しました"
+      RUN_END_MSG: "=== 投稿実行終了 ==="
+      SLACK_SUCCESS_TEXT: "✅ 投稿が成功しました"
+      SLACK_FAILURE_TEXT: "❌ 投稿が失敗しました（依存/Secrets/実行を確認してください）"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -42,38 +34,33 @@ jobs:
         run: |
           set -e
           python -m pip install --upgrade pip
-          if [ ! -f requirements.txt ]; then
-            echo "❌ requirements.txt が見つかりません。依存関係を定義してください。" >&2
-            exit 1
-          fi
-          python -m pip install -r requirements.txt
+          pip install -r requirements.txt
 
       - name: Verify required Python modules
         run: |
           set -e
           python - <<'PY'
           import sys, pkgutil
-          required = ["requests","feedparser","deep_translator","bs4","tweepy"]
+          required = ["requests", "feedparser", "deep_translator", "bs4", "tweepy"]
           missing = [m for m in required if pkgutil.find_loader(m) is None]
           if missing:
               print("Missing modules:", ", ".join(missing), file=sys.stderr)
               sys.exit(1)
           PY
-          echo "✅ All required Python modules are installed."
 
-      - name: Validate required secrets (X / Notion / Slack)
+      - name: Validate required secrets
         env:
+          _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          _SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           _X_API_KEY: ${{ secrets.X_API_KEY }}
           _X_API_SECRET: ${{ secrets.X_API_SECRET }}
           _X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           _X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
           _X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }} # 任意
-          _SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
           set -e
-          for s in _X_API_KEY _X_API_SECRET _X_ACCESS_TOKEN _X_ACCESS_SECRET _SLACK_WEBHOOK_URL _NOTION_API_KEY _NOTION_DATABASE_ID; do
+          for s in _NOTION_API_KEY _NOTION_DATABASE_ID _SLACK_WEBHOOK_URL _X_API_KEY _X_API_SECRET _X_ACCESS_TOKEN _X_ACCESS_SECRET; do
             val="${!s}"
             if [ -z "$val" ]; then
               echo "❌ Required secret is missing: ${s#_}" >&2
@@ -83,4 +70,72 @@ jobs:
               echo "❌ Secret seems too short: ${s#_}" >&2
               exit 1
             fi
-            orig_len=$(printf %s "$val" | wc_
+            orig_len=$(printf %s "$val" | wc -c)
+            nolf_len=$(printf %s "$val" | tr -d '\n' | wc -c)
+            nor_len=$(printf %s "$val" | tr -d '\r' | wc -c)
+            if [ "$orig_len" -ne "$nolf_len" ] || [ "$orig_len" -ne "$nor_len" ]; then
+              echo "❌ Secret contains newline or CR: ${s#_}" >&2
+              exit 1
+            fi
+          done
+          if [ -n "$_X_BEARER_TOKEN" ]; then
+            if [ ${#_X_BEARER_TOKEN} -lt 10 ]; then
+              echo "❌ X_BEARER_TOKEN seems too short." >&2
+              exit 1
+            fi
+          else
+            echo "ℹ️ Optional secret not set: X_BEARER_TOKEN"
+          fi
+          echo "✅ All required secrets are present and look sane."
+
+      - name: Backup repository to local-like storage
+        run: |
+          set -e
+          BACKUP_DIR="local_backups/$(date +'%Y%m%d_%H%M%S')"
+          mkdir -p "$BACKUP_DIR"
+          rsync -av --exclude "local_backups" ./ "$BACKUP_DIR"/
+          echo "✅ Backup completed at $BACKUP_DIR"
+
+      - name: Python syntax check (preflight)
+        run: |
+          set -e
+          python -m py_compile scripts/post_to_x.py
+          echo "✅ Syntax OK"
+
+      - name: Run post to X
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+        run: |
+          set -e
+          echo "$RUN_START_MSG"
+          echo "$RUN_DOING_MSG"
+          python scripts/post_to_x.py
+          echo "$RUN_SUCCESS_MSG"
+          echo "$RUN_END_MSG"
+
+      - name: Send Slack notification (success)
+        if: success()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            { "text": "${{ env.SLACK_SUCCESS_TEXT }}" }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Send Slack notification (failure)
+        if: failure()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            { "text": "${{ env.SLACK_FAILURE_TEXT }}" }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
