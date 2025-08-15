@@ -1,19 +1,18 @@
 import os
+import sys
 import requests
 import feedparser
 from deep_translator import DeeplTranslator
 
-# ===== 設定（Secrets をそのまま参照。任意は .get()）=====
+# ===== 環境変数（Secrets） =====
 NOTION_API_KEY = os.environ["NOTION_API_KEY"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 RSS_URL = os.environ["RSS_URL"]
 SLACK_WEBHOOK_URL = os.environ["SLACK_WEBHOOK_URL"]
-DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY", "")  # 任意
+DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY", "")
 
-# deep_translator の仕様に合わせ言語コードは小文字固定
 SRC_LANG = "en"
 TGT_LANG = "ja"
-
 NOTION_VERSION = "2022-06-28"
 
 # ===== 関数 =====
@@ -25,7 +24,6 @@ def get_existing_urls():
         "Content-Type": "application/json",
         "Notion-Version": NOTION_VERSION,
     }
-
     existing_urls = set()
     has_more = True
     next_cursor = None
@@ -52,15 +50,12 @@ def get_existing_urls():
 
 
 def filter_new_articles(articles, existing_urls):
-    """
-    articles: [{'title': str, 'url': str, 'summary': str}, ...]
-    existing_urls: set([...])
-    """
+    """既存URLと突き合わせて新規だけ抽出"""
     return [a for a in articles if a.get("url") and a["url"] not in existing_urls]
 
 
 def translate_text(text):
-    """DeepLで日本語に翻訳（DEEPL_API_KEY が未設定なら原文返却）"""
+    """DeepLで翻訳（APIキーが無ければ原文返却）"""
     if not text:
         return ""
     if not DEEPL_API_KEY:
@@ -70,7 +65,7 @@ def translate_text(text):
 
 
 def add_to_notion(article):
-    """記事をNotionの下書きDBに登録（Select = draft）"""
+    """Notionの下書きDBに登録（Select = draft, Summary 追加）"""
     url = "https://api.notion.com/v1/pages"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
@@ -82,6 +77,7 @@ def add_to_notion(article):
         "properties": {
             "Title": {"title": [{"text": {"content": article["title"]}}]},
             "URL": {"url": article["url"]},
+            "Summary": {"rich_text": [{"text": {"content": article.get("summary", "")}}]},
             "Select": {"select": {"name": "draft"}},
         },
     }
@@ -107,35 +103,30 @@ def main():
             summary_raw = getattr(entry, "summary", "") if hasattr(entry, "summary") else ""
 
             if not title_raw or not link:
-                # タイトル or URL 無しはスキップ（ログはSlackに載せない）
                 continue
 
             translated_title = translate_text(title_raw)
             translated_summary = translate_text(summary_raw) if summary_raw else ""
 
-            articles.append(
-                {
-                    "title": translated_title,
-                    "url": link,
-                    "summary": translated_summary,
-                }
-            )
+            articles.append({
+                "title": translated_title,
+                "url": link,
+                "summary": translated_summary,
+            })
 
-        # 既存URL取得 & 新規のみ抽出
         existing_urls = get_existing_urls()
         new_articles = filter_new_articles(articles, existing_urls)
 
-        # 登録処理
         for article in new_articles:
             add_to_notion(article)
 
-        # Slack通知
-        notify_slack(f"新規登録: {len(new_articles)}件 / 取得: {len(articles)}件 / 重複スキップ: {len(articles) - len(new_articles)}件")
+        notify_slack(
+            f"✅ Notion登録（本番）成功: 新規 {len(new_articles)} 件 / 取得 {len(articles)} 件 / 重複 {len(articles) - len(new_articles)} 件"
+        )
 
     except Exception as e:
-        # 失敗通知してリスロー（Actions failure に反映）
         try:
-            notify_slack(f"エラー発生: {str(e)}")
+            notify_slack(f"❌ Notion登録（本番）失敗: {str(e)}")
         finally:
             raise
 
