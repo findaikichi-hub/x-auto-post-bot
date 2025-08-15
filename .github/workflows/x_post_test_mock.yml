@@ -1,27 +1,92 @@
 name: Run X Post Test (Mock)
 
 on:
-  workflow_dispatch: # 手動実行のみ
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: x-post-test-mock
+  cancel-in-progress: true
 
 jobs:
   test-x-post:
     runs-on: ubuntu-latest
+    env:
+      RUN_START_MSG: "=== X投稿プリフライト開始（mock）==="
+      RUN_SUCCESS_MSG: "✅ X投稿プリフライト成功（mock）"
+      RUN_END_MSG: "=== X投稿プリフライト終了（mock）==="
+      RUN_FAILURE_MSG: "❌ X投稿プリフライト失敗（mock）"
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
+          cache: "pip"
 
       - name: Install dependencies
-        run: pip install tweepy
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+          python -m pip install tweepy
 
-      - name: Run X Post Test
+      - name: Validate X secrets
+        env:
+          _X_API_KEY: ${{ secrets.X_API_KEY }}
+          _X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          _X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          _X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+        run: |
+          set -e
+          for k in _X_API_KEY _X_API_SECRET _X_ACCESS_TOKEN _X_ACCESS_SECRET; do
+            val="${!k}"
+            if [ -z "$val" ]; then
+              echo "❌ Missing secret: ${k#_}" >&2
+              exit 1
+            fi
+            # 簡易な長さチェックで改行/空白混入を検知
+            len=${#val}
+            if [ "$len" -lt 10 ]; then
+              echo "❌ Secret seems too short: ${k#_}" >&2
+              exit 1
+            fi
+          done
+          echo "✅ All X secrets are present."
+
+      - name: Run X Post Test (preflight only)
         env:
           X_API_KEY: ${{ secrets.X_API_KEY }}
           X_API_SECRET: ${{ secrets.X_API_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
-        run: python scripts/x_post_test.py
+          X_POST_TEST_DO_POST: "false"
+        run: |
+          set -e
+          echo "$RUN_START_MSG"
+          python scripts/x_post_test.py
+          echo "$RUN_SUCCESS_MSG"
+          echo "$RUN_END_MSG"
+
+      - name: Send Slack notification (success)
+        if: success()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            { "text": "${{ env.RUN_SUCCESS_MSG }}" }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Send Slack notification (failure)
+        if: failure()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            { "text": "${{ env.RUN_FAILURE_MSG }}" }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
