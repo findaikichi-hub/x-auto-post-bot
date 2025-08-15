@@ -95,14 +95,18 @@ jobs:
         if: success()
         uses: slackapi/slack-github-action@v1.24.0
         with:
-          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           payload: |
             { "text": "${{ env.SLACK_SUCCESS_TEXT }}" }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
 
       - name: Send Slack notification (failure)
         if: failure()
         uses: slackapi/slack-github-action@v1.24.0
         with:
-          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
           payload: |
             { "text": "${{ env.SLACK_FAILURE_TEXT }}" }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
