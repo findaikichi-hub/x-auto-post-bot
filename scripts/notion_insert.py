@@ -3,7 +3,6 @@ import requests
 import feedparser
 from deep_translator import DeeplTranslator
 
-# ==== 環境変数からキー・設定を取得 ====
 NOTION_API_KEY = os.environ["NOTION_API_KEY"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 DEEPL_API_KEY = os.environ["DEEPL_API_KEY"]
@@ -18,9 +17,7 @@ headers = {
     "Notion-Version": "2022-06-28"
 }
 
-# ==== 重複チェック ====
 def is_url_already_registered(url: str) -> bool:
-    """Notionデータベースに既に同じURLがあるか確認"""
     query = {
         "filter": {
             "property": "URL",
@@ -31,12 +28,9 @@ def is_url_already_registered(url: str) -> bool:
     }
     response = requests.post(NOTION_QUERY_URL, headers=headers, json=query)
     response.raise_for_status()
-    data = response.json()
-    return len(data.get("results", [])) > 0
+    return len(response.json().get("results", [])) > 0
 
-# ==== Notion 登録 ====
 def add_page_to_notion(title: str, url: str, summary: str):
-    """記事をNotionに追加（重複除外済み）"""
     if is_url_already_registered(url):
         print(f"⚠️ 既存URLのためスキップ: {url}")
         return
@@ -53,12 +47,10 @@ def add_page_to_notion(title: str, url: str, summary: str):
     response.raise_for_status()
     print(f"✅ 登録完了: {title}")
 
-# ==== 翻訳 ====
 def translate_text(text: str) -> str:
     translator = DeeplTranslator(api_key=DEEPL_API_KEY, source="EN", target="JA")
     return translator.translate(text)
 
-# ==== RSS取得 ====
 def fetch_and_register_articles():
     feed = feedparser.parse(RSS_URL)
     for entry in feed.entries:
