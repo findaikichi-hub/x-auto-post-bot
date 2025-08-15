@@ -32,14 +32,18 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install & verify Python dependencies
+      - name: Install dependencies from requirements.txt
         run: |
           set -e
           python -m pip install --upgrade pip
-          python -m pip install requests
+          pip install -r requirements.txt
+
+      - name: Verify required Python modules
+        run: |
+          set -e
           python - <<'PY'
           import sys, pkgutil
-          required = ["requests"]
+          required = ["requests", "feedparser", "deep_translator", "bs4", "tweepy"]
           missing = [m for m in required if pkgutil.find_loader(m) is None]
           if missing:
               print("Missing modules:", ", ".join(missing), file=sys.stderr)
