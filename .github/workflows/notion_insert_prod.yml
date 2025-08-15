@@ -33,36 +33,30 @@ jobs:
       - name: Validate required secrets for PRODUCTION
         env:
           _RSS_URL: ${{ secrets.RSS_URL }}
-          _DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}  # 任意
           _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          _DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }} # 任意
         run: |
           set -e
-          if [ -z "${_RSS_URL}" ]; then
-            echo "❌ Required secret is missing: RSS_URL" >&2
-            exit 1
-          fi
-          if [ -z "${_NOTION_API_KEY}" ]; then
-            echo "❌ Required secret is missing: NOTION_API_KEY" >&2
-            exit 1
-          fi
-          if [ -z "${_NOTION_DATABASE_ID}" ]; then
-            echo "❌ Required secret is missing: NOTION_DATABASE_ID" >&2
-            exit 1
-          fi
-          echo "✅ RSS_URL, NOTION_API_KEY, NOTION_DATABASE_ID are present (DEEPL_API_KEY is optional)."
+          for s in _RSS_URL _NOTION_API_KEY _NOTION_DATABASE_ID; do
+            if [ -z "${!s}" ]; then
+              echo "❌ Required secret is missing: ${s#_}" >&2
+              exit 1
+            fi
+          done
+          echo "✅ All required production secrets are present."
 
       - name: Run production Notion insert
         env:
           RSS_URL: ${{ secrets.RSS_URL }}
-          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
         run: |
           set -e
-          echo "本番のNotion登録を実行中..."
+          echo "=== 本番 Notion 登録開始 ==="
           python scripts/notion_insert.py
-          echo "✅ Notion登録（本番）が成功しました"
+          echo "=== 本番 Notion 登録完了 ==="
 
       - name: Send Slack notification (success)
         if: success()
@@ -83,3 +77,4 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
