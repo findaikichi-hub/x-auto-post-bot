@@ -1,4 +1,4 @@
-name: Notion Insert Production
+name: Notion Insert
 
 on:
   workflow_dispatch:
@@ -77,4 +77,3 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-
