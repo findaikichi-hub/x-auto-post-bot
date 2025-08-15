@@ -1,28 +1,52 @@
-name: Notion Insert (Mock)
+name: Notion Insert Mock
 
 on:
   workflow_dispatch:
 
 jobs:
-  notion-insert-mock:
+  notion_insert:
     runs-on: ubuntu-latest
-    env:
-      PYTHONPATH: ${{ github.workspace }}
-      USE_MOCK: "true"
-      RSS_URL: ${{ secrets.RSS_URL }}
-      DEEPL_API_KEY: "dummy"
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install feedparser requests
+        run: |
+          pip install -r requirements.txt
 
-      - name: Run Notion Insert (Mock)
-        run: python scripts/notion_insert.py
+      - name: Run Notion Insert Script (Mock)
+        id: run_script
+        run: |
+          set -e
+          python scripts/notion_insert.py || echo "failed" > result_status.txt
+
+      - name: Determine result status
+        id: check_status
+        run: |
+          if [ -f result_status.txt ]; then
+            echo "status=failed" >> $GITHUB_OUTPUT
+          else
+            echo "status=success" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack Notification
+        if: always()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "モックワークフロー実行結果: ${{ steps.check_status.outputs.status }}",
+              "attachments": [
+                {
+                  "color": "${{ steps.check_status.outputs.status == 'success' && 'good' || 'danger' }}",
+                  "text": "Notion登録（モック）が ${{ steps.check_status.outputs.status }} しました"
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
