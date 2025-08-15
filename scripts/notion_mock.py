@@ -1,8 +1,22 @@
 import os
+import sys
 import requests
 import feedparser
 from deep_translator import DeeplTranslator
 
+# ===== 環境変数チェック =====
+required_envs = [
+    "NOTION_API_KEY",
+    "NOTION_DATABASE_ID",
+    "DEEPL_API_KEY",
+    "RSS_URL"
+]
+missing = [var for var in required_envs if not os.environ.get(var)]
+if missing:
+    print(f"❌ 必須環境変数が未設定です: {', '.join(missing)}", file=sys.stderr)
+    sys.exit(1)
+
+# ===== 環境変数読み込み =====
 NOTION_API_KEY = os.environ["NOTION_API_KEY"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 DEEPL_API_KEY = os.environ["DEEPL_API_KEY"]
