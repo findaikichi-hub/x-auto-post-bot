@@ -39,7 +39,7 @@ jobs:
           python -m pip install feedparser deep-translator requests beautifulsoup4
           python - <<'PY'
           import sys, pkgutil
-          required = ["feedparser","deep_translator","requests","bs4"]
+          required = ["feedparser","deep_translator","requests","bs4"]  # bs4 は beautifulsoup4 のインポート名
           missing = [m for m in required if pkgutil.find_loader(m) is None]
           if missing:
               print("Missing modules:", ", ".join(missing), file=sys.stderr)
@@ -96,4 +96,11 @@ jobs:
         uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
-            { "text": "${{ env.SLACK_SUCCESS_
+            { "text": "${{ env.SLACK_SUCCESS_TEXT }}" }
+
+      - name: Send Slack notification (failure)
+        if: failure()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            { "text": "${{ env.SLACK_FAILURE_TEXT }}" }
