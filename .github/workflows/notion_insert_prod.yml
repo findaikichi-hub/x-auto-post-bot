@@ -1,10 +1,10 @@
-name: Notion Insert prod
+name: Notion Insert Production
 
 on:
   workflow_dispatch:
 
 jobs:
-  insert:
+  insert_production:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -32,31 +32,37 @@ jobs:
 
       - name: Validate required secrets for PRODUCTION
         env:
+          _RSS_URL: ${{ secrets.RSS_URL }}
+          _DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}  # 任意
           _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          _DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
-          _RSS_URL: ${{ secrets.RSS_URL }}
         run: |
           set -e
-          for v in _NOTION_API_KEY _NOTION_DATABASE_ID _DEEPL_API_KEY _RSS_URL; do
-            if [ -z "${!v}" ]; then
-              echo "❌ Required secret is missing: $v" >&2
-              exit 1
-            fi
-          done
-          echo "✅ All required secrets exist."
+          if [ -z "${_RSS_URL}" ]; then
+            echo "❌ Required secret is missing: RSS_URL" >&2
+            exit 1
+          fi
+          if [ -z "${_NOTION_API_KEY}" ]; then
+            echo "❌ Required secret is missing: NOTION_API_KEY" >&2
+            exit 1
+          fi
+          if [ -z "${_NOTION_DATABASE_ID}" ]; then
+            echo "❌ Required secret is missing: NOTION_DATABASE_ID" >&2
+            exit 1
+          fi
+          echo "✅ RSS_URL, NOTION_API_KEY, NOTION_DATABASE_ID are present (DEEPL_API_KEY is optional)."
 
-      - name: Run Notion insert (production)
+      - name: Run production Notion insert
         env:
+          RSS_URL: ${{ secrets.RSS_URL }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
-          RSS_URL: ${{ secrets.RSS_URL }}
         run: |
           set -e
           echo "本番のNotion登録を実行中..."
           python scripts/notion_insert.py
-          echo "Notion登録（本番）が成功しました"
+          echo "✅ Notion登録（本番）が成功しました"
 
       - name: Send Slack notification (success)
         if: success()
@@ -77,4 +83,3 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-
