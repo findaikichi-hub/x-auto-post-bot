@@ -4,70 +4,29 @@ on:
   workflow_dispatch:
 
 jobs:
-  notion-insert-mock:
+  insert_mock:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests
-
       - name: Run mock Notion insert
-        id: run_script
         run: |
-          set +e
-          python <<'PYCODE'
-          import json
-
-          try:
-              result = {"status": "success", "error_message": ""}
-          except Exception as e:
-              result = {"status": "failure", "error_message": str(e)}
-
-          with open("result.json", "w") as f:
-              json.dump(result, f)
-          PYCODE
           set -e
+          echo "モックのNotion登録を実行中..."
+          # 実際の処理はここに記述（例: curlやpythonスクリプト呼び出し）
+          echo "Notion登録（モック）が成功しました"
 
-      - name: Read result
-        id: read_result
-        run: |
-          status=$(jq -r '.status' result.json)
-          error_message=$(jq -r '.error_message' result.json)
-          echo "status=${status}" >> $GITHUB_OUTPUT
-          echo "error_message=${error_message}" >> $GITHUB_OUTPUT
-
-      - name: Prepare Slack payload
-        run: |
-          STATUS="${{ steps.read_result.outputs.status }}"
-          ERROR_MSG="${{ steps.read_result.outputs.error_message }}"
-
-          if [ "$STATUS" = "success" ]; then
-            MESSAGE="Notion登録（モック）が成功しました"
-            COLOR="good"
-          else
-            MESSAGE="Notion登録（モック）が失敗しました\n\nエラー内容:\n\`\`\`${ERROR_MSG}\`\`\`"
-            COLOR="danger"
-          fi
-
-          jq -n \
-            --arg top_text "$MESSAGE" \
-            --arg text "$MESSAGE" \
-            --arg color "$COLOR" \
-            '{text: $top_text, attachments: [{color: $color, text: $text}]}' > slack_payload.json
-
-      - name: Send to Slack
+      - name: Send Slack notification
         uses: slackapi/slack-github-action@v1.24.0
         with:
-          payload-file-path: slack_payload.json
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          payload: |
+            {
+              "text": "Notion登録（モック）が成功しました",
+              "attachments": [
+                {
+                  "color": "good",
+                  "text": "Notion登録（モック）が成功しました"
+                }
+              ]
+            }
