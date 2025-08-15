@@ -1,4 +1,4 @@
-name: Notion Insert
+name: Notion Insert prod
 
 on:
   workflow_dispatch:
@@ -33,30 +33,38 @@ jobs:
       - name: Validate required secrets for PRODUCTION
         env:
           _RSS_URL: ${{ secrets.RSS_URL }}
-          _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          _DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          _NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          _DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }} # 任意
         run: |
           set -e
-          for s in _RSS_URL _NOTION_API_KEY _NOTION_DATABASE_ID; do
-            if [ -z "${!s}" ]; then
-              echo "❌ Required secret is missing: ${s#_}" >&2
+          for secret in _RSS_URL _NOTION_TOKEN _NOTION_DATABASE_ID; do
+            if [ -z "${!secret}" ]; then
+              echo "❌ Required secret is missing: $secret" >&2
               exit 1
             fi
           done
-          echo "✅ All required production secrets are present."
+          echo "✅ All required secrets for PRODUCTION are present."
+
+      - name: Backup repository to local-like storage
+        run: |
+          set -e
+          BACKUP_DIR="local_backups/$(date +'%Y%m%d_%H%M%S')"
+          mkdir -p "$BACKUP_DIR"
+          rsync -av --exclude "local_backups" ./ "$BACKUP_DIR"/
+          echo "✅ Backup completed at $BACKUP_DIR"
 
       - name: Run production Notion insert
         env:
           RSS_URL: ${{ secrets.RSS_URL }}
-          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
           set -e
           echo "=== 本番 Notion 登録開始 ==="
           python scripts/notion_insert.py
-          echo "=== 本番 Notion 登録完了 ==="
+          echo "✅ 本番 Notion 登録が完了しました"
 
       - name: Send Slack notification (success)
         if: success()
