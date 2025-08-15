@@ -4,11 +4,17 @@ on:
   workflow_dispatch:
 
 jobs:
-  insert:
+  insert_mock:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          set -e
+          pip install --upgrade pip
+          pip install feedparser
 
       - name: Run mock Notion insert
         run: |
