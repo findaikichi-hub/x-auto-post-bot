@@ -3,9 +3,26 @@ name: Notion Insert Mock
 on:
   workflow_dispatch:
 
+# 同時実行の衝突を防止（手動連打対策）
+concurrency:
+  group: notion-insert-mock
+  cancel-in-progress: true
+
+# 最小権限
+permissions:
+  contents: read
+
 jobs:
   insert_mock:
     runs-on: ubuntu-latest
+    # 長文/通知文などは変数化して参照
+    env:
+      RUN_START_MSG: "=== 運用テスト実行中 ==="
+      RUN_DOING_MSG: "モックのNotion登録を実行中..."
+      RUN_SUCCESS_MSG: "Notion登録（モック）が成功しました"
+      RUN_END_MSG: "=== 運用テスト終了 ==="
+      SLACK_SUCCESS_TEXT: "✅ Notion登録（モック）が成功しました"
+      SLACK_FAILURE_TEXT: "❌ Notion登録（モック）が失敗しました（依存/Secrets/実行を確認してください）"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,7 +37,7 @@ jobs:
         run: |
           set -e
           python -m pip install --upgrade pip
-          # 必須パッケージ（deep-translator / bs4 など）
+          # 必須パッケージ（deep-translator を含む）
           python -m pip install feedparser deep-translator requests beautifulsoup4
           # 依存の存在を検証（無ければ即fail）
           python - <<'PY'
@@ -76,18 +93,18 @@ jobs:
           X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
         run: |
           set -e
-          echo "=== 運用テスト実行中 ==="
-          echo "モックのNotion登録を実行中..."
+          echo "$RUN_START_MSG"
+          echo "$RUN_DOING_MSG"
           python scripts/notion_mock.py
-          echo "Notion登録（モック）が成功しました"
-          echo "=== 運用テスト終了 ==="
+          echo "$RUN_SUCCESS_MSG"
+          echo "$RUN_END_MSG"
 
       - name: Send Slack notification (success)
         if: success()
         uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
-            { "text": "✅ Notion登録（モック）が成功しました" }
+            { "text": "${{ env.SLACK_SUCCESS_TEXT }}" }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
@@ -97,7 +114,7 @@ jobs:
         uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
-            { "text": "❌ Notion登録（モック）が失敗しました（依存/Secrets/実行を確認してください）" }
+            { "text": "${{ env.SLACK_FAILURE_TEXT }}" }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
