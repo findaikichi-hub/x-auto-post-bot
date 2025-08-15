@@ -1,28 +1,27 @@
 import os
 import requests
 import feedparser
-from datetime import datetime
 from deep_translator import DeeplTranslator
 
-# ===== 設定（Secrets をそのまま参照）=====
+# ===== 設定（Secrets をそのまま参照。任意は .get()）=====
 NOTION_API_KEY = os.environ["NOTION_API_KEY"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
-DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY", "")  # 任意
 RSS_URL = os.environ["RSS_URL"]
 SLACK_WEBHOOK_URL = os.environ["SLACK_WEBHOOK_URL"]
+DEEPL_API_KEY = os.environ.get("DEEPL_API_KEY", "")  # 任意
 
-# 言語コードは deep_translator 仕様に合わせて小文字で固定
+# deep_translator の仕様に合わせ言語コードは小文字固定
 SRC_LANG = "en"
 TGT_LANG = "ja"
 
 # ===== 関数 =====
 def get_existing_urls():
-    """Notionの下書きDBから既存URL一覧を取得"""
+    """Notionの下書きDBから既存URL一覧を取得（重複登録防止用）"""
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
         "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28"
+        "Notion-Version": "2022-06-28",
     }
 
     existing_urls = set()
@@ -34,7 +33,7 @@ def get_existing_urls():
         if next_cursor:
             payload["start_cursor"] = next_cursor
 
-        res = requests.post(url, headers=headers, json=payload)
+        res = requests.post(url, headers=headers, json=payload, timeout=30)
         res.raise_for_status()
         data = res.json()
 
@@ -55,7 +54,7 @@ def filter_new_articles(articles, existing_urls):
     articles: [{'title': str, 'url': str, 'summary': str}, ...]
     existing_urls: set([...])
     """
-    return [a for a in articles if a["url"] not in existing_urls]
+    return [a for a in articles if a.get("url") and a["url"] not in existing_urls]
 
 
 def translate_text(text):
@@ -69,35 +68,29 @@ def translate_text(text):
 
 
 def add_to_notion(article):
-    """記事をNotionの下書きDBに登録"""
+    """記事をNotionの下書きDBに登録（Select = draft）"""
     url = "https://api.notion.com/v1/pages"
     headers = {
         "Authorization": f"Bearer {NOTION_API_KEY}",
         "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28"
+        "Notion-Version": "2022-06-28",
     }
     payload = {
         "parent": {"database_id": NOTION_DATABASE_ID},
         "properties": {
-            "Title": {
-                "title": [{"text": {"content": article["title"]}}]
-            },
-            "URL": {
-                "url": article["url"]
-            },
-            "Select": {
-                "select": {"name": "draft"}
-            }
-        }
+            "Title": {"title": [{"text": {"content": article["title"]}}]},
+            "URL": {"url": article["url"]},
+            "Select": {"select": {"name": "draft"}},
+        },
     }
-    res = requests.post(url, headers=headers, json=payload)
+    res = requests.post(url, headers=headers, json=payload, timeout=30)
     res.raise_for_status()
 
 
 def notify_slack(message):
-    """Slack通知"""
+    """Slack通知（text フィールド必須）"""
     payload = {"text": message}
-    res = requests.post(SLACK_WEBHOOK_URL, json=payload)
+    res = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=15)
     res.raise_for_status()
 
 
@@ -106,19 +99,44 @@ def main():
         # RSS取得
         feed = feedparser.parse(RSS_URL)
         articles = []
-        for entry in feed.entries:
-            title_raw = getattr(entry, "title", "")
+        for entry in getattr(feed, "entries", []):
+            title_raw = getattr(entry, "title", "") or ""
+            link = getattr(entry, "link", "") or ""
             summary_raw = getattr(entry, "summary", "") if hasattr(entry, "summary") else ""
+
+            if not title_raw or not link:
+                # タイトル or URL 無しはスキップ（ログはSlackに載せない）
+                continue
+
             translated_title = translate_text(title_raw)
             translated_summary = translate_text(summary_raw) if summary_raw else ""
-            articles.append({
-                "title": translated_title,
-                "url": getattr(entry, "link", ""),
-                "summary": translated_summary
-            })
 
-        # 既存URL取得
+            articles.append(
+                {
+                    "title": translated_title,
+                    "url": link,
+                    "summary": translated_summary,
+                }
+            )
+
+        # 既存URL取得 & 新規のみ抽出
         existing_urls = get_existing_urls()
+        new_articles = filter_new_articles(articles, existing_urls)
 
-        # 新規記事だけ抽出
-        new_articles = fil_
+        # 登録処理
+        for article in new_articles:
+            add_to_notion(article)
+
+        # Slack通知
+        notify_slack(f"新規登録: {len(new_articles)}件 / 取得: {len(articles)}件 / 重複スキップ: {len(articles) - len(new_articles)}件")
+
+    except Exception as e:
+        # 失敗通知してリスロー（Actions failure に反映）
+        try:
+            notify_slack(f"エラー発生: {str(e)}")
+        finally:
+            raise
+
+
+if __name__ == "__main__":
+    main()
