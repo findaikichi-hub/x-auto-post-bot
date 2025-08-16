@@ -1,31 +1,14 @@
-name: Notion Insert Mock
+name: Run Notion Insert Mock
 
 on:
   workflow_dispatch:
   schedule:
-    # JST 07:02, 13:02, 17:02, 23:02 発火（UTC換算で前日22:02, 当日04:02, 08:02, 14:02）
-    - cron: "2 22,4,8,14 * * *"
-
-# 同時実行の衝突を防止（手動連打対策）
-concurrency:
-  group: notion-insert-mock
-  cancel-in-progress: true
-
-# 最小権限
-permissions:
-  contents: read
+    - cron: "0 * * * *"  # 毎時0分に実行
 
 jobs:
-  insert_mock:
+  run-mock:
     runs-on: ubuntu-latest
-    # 長文/通知文などは変数化して参照
-    env:
-      RUN_START_MSG: "=== 運用テスト実行中 ==="
-      RUN_DOING_MSG: "モックのNotion登録を実行中..."
-      RUN_SUCCESS_MSG: "Notion登録（モック）が成功しました"
-      RUN_END_MSG: "=== 運用テスト終了 ==="
-      SLACK_SUCCESS_TEXT: "✅ Notion登録（モック）が成功しました"
-      SLACK_FAILURE_TEXT: "❌ Notion登録（モック）が失敗しました（依存/Secrets/実行を確認してください）"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -34,90 +17,36 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
-      - name: Install & verify Python dependencies
+      - name: Install dependencies
         run: |
-          set -e
           python -m pip install --upgrade pip
-          # 必須パッケージ（deep-translator を含む）
-          python -m pip install feedparser deep-translator requests beautifulsoup4
-          # 依存の存在を検証（無ければ即fail）
-          python - <<'PY'
-          import sys, pkgutil
-          required = ["feedparser","deep_translator","requests","bs4"]
-          missing = [m for m in required if pkgutil.find_loader(m) is None]
-          if missing:
-              print("Missing modules:", ", ".join(missing), file=sys.stderr)
-              sys.exit(1)
-          PY
+          pip install feedparser deep-translator notion-client requests
 
-      - name: Validate required secrets for MOCK
-        env:
-          _RSS_URL: ${{ secrets.RSS_URL }}
-          _NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          _NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          _SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: |
-          set -e
-          for s in _RSS_URL _NOTION_API_KEY _NOTION_DATABASE_ID _SLACK_WEBHOOK_URL; do
-            if [ -z "${!s}" ]; then
-              echo "❌ Required secret is missing: ${s#_}" >&2
-              exit 1
-            fi
-          done
-          echo "✅ All required secrets for MOCK are present. (DEEPL_API_KEY is optional)"
-
-      - name: Backup repository to local-like storage
-        run: |
-          set -e
-          BACKUP_DIR="local_backups/$(date +'%Y%m%d_%H%M%S')"
-          mkdir -p "$BACKUP_DIR"
-          rsync -av --exclude "local_backups" ./ "$BACKUP_DIR"/
-          echo "✅ Backup completed at $BACKUP_DIR"
-
-      - name: Python syntax check (preflight)
-        run: |
-          set -e
-          # 実行前に構文エラーを検出して即failさせる
-          python -m py_compile scripts/notion_mock.py
-          echo "✅ Syntax OK"
-
-      - name: Run mock Notion insert
+      - name: Run Notion Insert Mock Script
         env:
           RSS_URL: ${{ secrets.RSS_URL }}
           DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          X_API_KEY: ${{ secrets.X_API_KEY }}
-          X_API_SECRET: ${{ secrets.X_API_SECRET }}
-          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
         run: |
-          set -e
-          echo "$RUN_START_MSG"
-          echo "$RUN_DOING_MSG"
+          set +e
           python scripts/notion_mock.py
-          echo "$RUN_SUCCESS_MSG"
-          echo "$RUN_END_MSG"
+          exit_code=$?
+          set -e
 
-      - name: Send Slack notification (success)
+          if [ $exit_code -ne 0 ]; then
+            echo "モック処理失敗"
+            curl -X POST -H 'Content-type: application/json' \
+              --data "{\"text\":\"❌ モック処理失敗しました。\"}" \
+              ${{ secrets.SLACK_WEBHOOK_URL }}
+            exit 1
+          fi
+
+      - name: Notify success to Slack
         if: success()
-        uses: slackapi/slack-github-action@v1.24.0
-        with:
-          payload: |
-            { "text": "${{ env.SLACK_SUCCESS_TEXT }}" }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-
-      - name: Send Slack notification (failure)
-        if: failure()
-        uses: slackapi/slack-github-action@v1.24.0
-        with:
-          payload: |
-            { "text": "${{ env.SLACK_FAILURE_TEXT }}" }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"✅ モック処理が成功しました。\"}" \
+            ${{ secrets.SLACK_WEBHOOK_URL }}
