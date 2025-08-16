@@ -36,16 +36,20 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install & verify Python dependencies
+      # ✅ ここを追記（requirements.txt に沿って毎回全部インストール）
+      - name: Install dependencies from requirements.txt
         run: |
           set -e
           python -m pip install --upgrade pip
-          # 必須パッケージ（deep-translator を含む）
-          python -m pip install feedparser deep-translator requests beautifulsoup4
+          pip install -r requirements.txt
+
+      - name: Install & verify Python dependencies
+        run: |
+          set -e
           # 依存の存在を検証（無ければ即fail）
           python - <<'PY'
           import sys, pkgutil
-          required = ["feedparser","deep_translator","requests","bs4"]
+          required = ["feedparser","deep_translator","requests","bs4","tweepy"]
           missing = [m for m in required if pkgutil.find_loader(m) is None]
           if missing:
               print("Missing modules:", ", ".join(missing), file=sys.stderr)
