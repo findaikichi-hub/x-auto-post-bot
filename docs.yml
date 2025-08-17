@@ -1,2 +1,32 @@
-name: Docs
-on: [push]
+name: Docs Sync (Dev)
+
+on:
+  push:
+    branches: [ "docs-sync-dev" ]
+  workflow_dispatch:
+
+jobs:
+  sync-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Generate API docs with pdoc
+        run: |
+          pdoc --output-dir docs/api scripts
+
+      - name: Sync docs to Notion (Dev DB)
+        env:
+          NOTION_API_KEY: ${{ secrets.DEV_NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.DEV_NOTION_DATABASE_ID }}
+        run: |
+          python scripts/sync_docs_to_notion.py
