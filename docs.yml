@@ -1,32 +1,63 @@
-name: Docs Sync (Dev)
-
+name: Docs: build & sync to Notion
 on:
   push:
-    branches: [ "docs-sync-dev" ]
-  workflow_dispatch:
+    branches: [ staging, main ]   # ← ブランチに push で自動実行
+  workflow_dispatch:              # ← 手動実行ボタンを出す
 
 jobs:
-  sync-docs:
+  build_docs_and_sync:
+    # 入力があればそれを、無ければブランチから環境名を決める
+    environment:
+      name: ${{ inputs.environment || (github.ref_name == 'main' && 'production' || 'staging') }}
+
     runs-on: ubuntu-latest
+
+    # ブランチに応じて Notion の DB を自動で切替（staging=DEV_ / main=本番）
+    env:
+      NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+      NOTION_DATABASE_ID: ${{ (github.ref_name == 'main' && secrets.NOTION_DATABASE_ID) || secrets.DEV_NOTION_DATABASE_ID }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # 念のため pdoc が requirements に無い場合の保険
+          python - <<'PY'
+          import importlib, subprocess, sys
+          try:
+              importlib.import_module("pdoc")
+          except ImportError:
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "pdoc"])
+          PY
 
-      - name: Generate API docs with pdoc
+      - name: Build API docs with pdoc
         run: |
-          pdoc --output-dir docs/api scripts
+          mkdir -p docs/api
+          # あなたのコードの置き場所に合わせて対象を調整（src/ が無ければ scripts/ でもOK）
+          if [ -d "src" ]; then
+            pdoc -o docs/api src
+          else
+            pdoc -o docs/api scripts
+          fi
 
-      - name: Sync docs to Notion (Dev DB)
+      - name: Show generated files (debug)
+        run: |
+          echo "Generated docs:"
+          ls -R docs/api || true
+
+      - name: Sync to Notion (batched)
         env:
-          NOTION_API_KEY: ${{ secrets.DEV_NOTION_API_KEY }}
-          NOTION_DATABASE_ID: ${{ secrets.DEV_NOTION_DATABASE_ID }}
+          NOTION_API_KEY: ${{ env.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ env.NOTION_DATABASE_ID }}
         run: |
           python scripts/sync_docs_to_notion.py
