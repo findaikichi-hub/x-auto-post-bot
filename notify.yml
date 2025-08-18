@@ -1,2 +1,0 @@
-name: Notify
-on: [workflow_run]
